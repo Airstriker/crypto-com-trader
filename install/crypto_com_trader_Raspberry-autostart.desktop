@@ -1,0 +1,5 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=crypto_com_trader autostart
+Comment=Start a supervisord crypto_com_trader on Raspberry
+Exec=/usr/bin/lxterm -e "cd /trader_dir_path && sh /trader_dir_path/start_crypto_com_trader_with_supervisored_Raspberry.sh"
