@@ -2,10 +2,13 @@ import os
 import sys
 import asyncio
 import logging
+import websockets
+import socket
 from event_dispatcher import EventDispatcher
 from crypto_com_client import CryptoComClient
 from crypto_com_lib import CryptoClient
 from periodic import PeriodicAsync
+from pid import PidFile
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,11 +28,17 @@ class CryptoComUserApiWorker:
         '''
         Provides information on all supported instruments (e.g. BTC_USDT)
         '''
-        await client.send(
-            client.build_message(
-                method="public/get-instruments",
-            )
-        )
+        if client.authenticated:
+            try:
+                await client.send(
+                    client.build_message(
+                        method="public/get-instruments"
+                    )
+                )
+            except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
+                pass  # That's not a critical request - no need to retransmit
+        else:
+            self.logger.warning("Websocket connection not authenticated! Cannot send public/get-instruments request.")
 
     def handle_response_get_instruments(self, event: dict):
         '''
@@ -122,14 +131,19 @@ class CryptoComUserApiWorker:
             await periodic_call_get_instruments.start()
             try:
                 while True:
+                    event_or_response = None
                     try:
-                        event = await client.next_event()
-                        event_dispatcher.dispatch(event)
+                        event_or_response = await client.next_event_or_response()
+                        event_dispatcher.dispatch(event_or_response)
                     except Exception as e:
-                        message = "Exception in handling user api event: {}".format(repr(e))
-                        self.logger.error(message)
-                        self.logger.error("Event that failed: {}".format(event))
-                        # Send pushover notification here
+                        if event_or_response:
+                            message = "Exception during handling user api event or response: {}".format(repr(e))
+                            self.logger.exception(message)
+                            self.logger.error("Event or response that failed: {}".format(event_or_response))
+                        else:
+                            message = "Exception during parsing user api event or response: {}".format(repr(e))
+                            self.logger.exception(message)
+                        # TODO: Send pushover notification here with message
                         continue
             finally:
                 self.logger.info("Cleanup before closing worker...")
@@ -140,17 +154,20 @@ class CryptoComUserApiWorker:
         # boo = asyncio.create_task(loop.run_in_executor(executor, say_boo))
         # baa = asyncio.create_task(loop.run_in_executor(executor, say_baa))
         # loop.run_forever()
-        try:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(self.run())
-        except KeyboardInterrupt:
-            self.logger.info("Interrupted")
+        with PidFile(pidname="crypto_com_user_api_worker", piddir="./logs") as pidfile:
             try:
-                sys.exit(0)
-            except SystemExit:
-                os._exit(0)
-        except Exception as e:
-            self.logger.exception(e)
-        finally:
-            self.logger.info("Bye bye!")
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(self.run())
+            except KeyboardInterrupt:
+                self.logger.info("Interrupted")
+                pidfile.close(fh=pidfile.fh, cleanup=True)
+                try:
+                    sys.exit(0)
+                except SystemExit:
+                    os._exit(0)
+            except Exception as e:
+                self.logger.exception(e)
+            finally:
+                pidfile.close(fh=pidfile.fh, cleanup=True)
+                self.logger.info("Bye bye!")
 
