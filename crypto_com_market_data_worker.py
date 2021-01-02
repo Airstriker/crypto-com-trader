@@ -6,17 +6,24 @@ from event_dispatcher import EventDispatcher
 from crypto_com_lib import CryptoClient
 from pid import PidFile
 
-logging.basicConfig(level=logging.INFO)
-
 
 class CryptoComMarketDataWorker:
 
     def __init__(self, shared_market_data: dict, debug: bool = True, log_file: str = None):
         print("Initializing crypto.com market data worker...")
         self.debug = debug
-        self.log_file = log_file
         self.log_file = log_file if log_file else "./logs/crypto_com_market_data_worker.log"
-        self.logger = logging.getLogger(log_file) if log_file else logging.getLogger("./logs/crypto_com_market_data_worker.log")
+        self.logger = logging.getLogger("crypto_com_market_data_worker")
+        self.logger.setLevel(logging.DEBUG)
+        fh = logging.FileHandler(self.log_file, mode="w")
+        fh.setLevel(logging.DEBUG)
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        fh.setFormatter(formatter)
+        self.logger.addHandler(ch)
+        self.logger.addHandler(fh)
         self.shared_market_data = shared_market_data
 
     def handle_channel_event_ticker_BTC_USDT(self, event: dict):
@@ -63,7 +70,7 @@ class CryptoComMarketDataWorker:
         async with CryptoClient(
                 client_type=CryptoClient.MARKET,
                 debug=self.debug,
-                log_file=self.log_file,
+                logger=self.logger,
                 channels=[
                     "ticker.BTC_USDT",
                     "ticker.CRO_USDT",

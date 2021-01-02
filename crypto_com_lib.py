@@ -12,6 +12,7 @@ import logging
 import socket
 from typing import List
 
+
 class CryptoClient:
 
     MARKET = 0
@@ -22,7 +23,7 @@ class CryptoClient:
     USER_URI = "wss://stream.crypto.com/v2/user"
     SANDBOX_USER_URI = "wss://uat-stream.3ona.co/v2/user"
 
-    def __init__(self, client_type: int, debug: bool = True, log_file: str = None, channels: List[str] = None, api_secret: str = None, api_key: str = None, websocket=None, ):
+    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, api_secret: str = None, api_key: str = None, websocket=None, ):
         self.api_secret = api_secret.encode() if api_key else None
         self.api_key = api_key
         self._next_id = 1
@@ -31,7 +32,20 @@ class CryptoClient:
         self.client_type = client_type
         self.debug = debug
         self.authenticated = False
-        self.logger = logging.getLogger(log_file) if log_file else logging.getLogger("crypto_com_lib")
+        if logger:
+            self.logger = logger
+        else:
+            self.logger = logging.getLogger("crypto_com_lib")
+            self.logger.setLevel(logging.DEBUG)
+            fh = logging.FileHandler("./logs/crypto_com_lib.log", mode="w")
+            fh.setLevel(logging.DEBUG)
+            ch = logging.StreamHandler()
+            ch.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            ch.setFormatter(formatter)
+            fh.setFormatter(formatter)
+            self.logger.addHandler(ch)
+            self.logger.addHandler(fh)
 
     def get_nonce(self):
         return int(time.time() * 1000)
