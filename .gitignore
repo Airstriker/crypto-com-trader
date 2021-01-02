@@ -8,3 +8,4 @@ logs/
 configs/crypto_com_trader.cfg_julian
 configs/crypto_com_trader.cfg_micz
 configs/crypto_com_trader.cfg_test
+ngrok
