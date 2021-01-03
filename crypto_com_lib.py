@@ -10,10 +10,10 @@ import hashlib
 import time
 import logging
 import socket
-from typing import List
+from typing import List, Callable
 
 
-class CryptoClient:
+class CryptoComApiClient(object):
 
     MARKET = 0
     USER = 1
@@ -23,7 +23,7 @@ class CryptoClient:
     USER_URI = "wss://stream.crypto.com/v2/user"
     SANDBOX_USER_URI = "wss://uat-stream.3ona.co/v2/user"
 
-    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, api_secret: str = None, api_key: str = None, ):
+    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, api_secret: str = None, api_key: str = None, observer_for_authenticated: Callable = None):
         self.api_secret = api_secret.encode() if api_key else None
         self.api_key = api_key
         self._next_id = 1
@@ -31,7 +31,10 @@ class CryptoClient:
         self.websocket = None
         self.client_type = client_type
         self.debug = debug
-        self.authenticated = False
+        self._authenticated = False
+        self._authenticated_observers = []  # Supporting only normal (not async (coroutines)) callbacks
+        if observer_for_authenticated:
+            self.register_observer_for_authenticated(observer_for_authenticated)
         if logger:
             self.logger = logger
         else:
@@ -46,6 +49,21 @@ class CryptoClient:
             fh.setFormatter(formatter)
             self.logger.addHandler(ch)
             self.logger.addHandler(fh)
+
+    @property
+    def authenticated(self):
+        return self._authenticated
+
+    @authenticated.setter
+    def authenticated(self, value):
+        self._authenticated = value
+        # Notify the observers of the value change
+        for callback in self._authenticated_observers:
+            # Supporting only normal (not async (coroutines)) callbacks
+            callback(self._authenticated)
+
+    def register_observer_for_authenticated(self, callback):
+        self._authenticated_observers.append(callback)
 
     def get_nonce(self):
         return int(time.time() * 1000)
@@ -120,10 +138,11 @@ class CryptoClient:
         while event_or_response is None:
             message = None
             try:
-                if not self.websocket.open:
+                if not self.websocket or not self.websocket.open:
                     self.authenticated = False
-                    self.logger.error("Websocket NOT connected. Trying to reconnect...")
-                    # TODO: Send pushover notification here!
+                    if self.websocket and not self.websocket.open:
+                        self.logger.error("Websocket NOT connected. Trying to reconnect...")
+                        # TODO: Send pushover notification here!
                     await self.websocket_connect()
                 message = await asyncio.wait_for(self.websocket.recv(), timeout=31)  # At least Heartbeat should be received within 30 seconds
                 event_or_response = await self.parse_message(json.loads(message))
@@ -133,7 +152,8 @@ class CryptoClient:
                 continue
             except asyncio.TimeoutError as e:
                 self.logger.exception("Timeout on websocket.recv()!")
-                await self.websocket.close()  # For simpler flow
+                await self.websocket_disconnect()  # For simpler flow
+                self.authenticated = False
                 continue
             except Exception as e:
                 self.logger.exception("Exception during received message parsing: {}".format(repr(e)))
@@ -164,7 +184,8 @@ class CryptoClient:
                 if data["code"] == 0:
                     self.logger.info("Subscription success!")
                 else:
-                    await self.websocket.close()  # For simpler flow
+                    await self.websocket_disconnect()  # For simpler flow
+                    self.authenticated = False
                     raise Exception(f"Error when subscribing: {json.dumps(data)}")
         elif data["method"] == "public/auth":
             if data["code"] == 0:
@@ -173,7 +194,7 @@ class CryptoClient:
                 if self.channels:
                     await self.subscribe()
             else:
-                await self.websocket.close()  # For simpler flow
+                await self.websocket_disconnect()  # For simpler flow
                 raise Exception(f"Auth error: {json.dumps(data)}")
         else:
             return data
@@ -196,10 +217,13 @@ class CryptoClient:
         elif self.channels:
             await self.subscribe()
 
+    async def websocket_disconnect(self):
+        self.logger.info("Closing websocket!")
+        await self.websocket.close()
+
     async def __aenter__(self):
         await self.websocket_connect()
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        self.logger.info("Closing websocket!")
-        await self.websocket.close()
+        await self.websocket_disconnect()

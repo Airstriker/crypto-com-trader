@@ -4,18 +4,18 @@ import asyncio
 import logging
 import websockets
 import socket
+import multiprocessing.queues
 from event_dispatcher import EventDispatcher
 from crypto_com_client import CryptoComClient
-from crypto_com_lib import CryptoClient
-from multiprocessing.queues import Queue
-from queue import Empty
+from crypto_com_lib import CryptoComApiClient
+from queue import Empty, Queue
 from periodic import PeriodicAsync
 from pid import PidFile
 
 
-class CryptoComUserApiWorker:
+class CryptoComUserApiWorker(object):
 
-    def __init__(self, crypto_com_client: CryptoComClient, shared_user_api_data: dict, shared_market_data: dict, buy_sell_requests_queue: Queue, debug: bool = True, log_file: str = None):
+    def __init__(self, crypto_com_client: CryptoComClient, shared_user_api_data: dict, shared_market_data: dict, buy_sell_requests_queue: multiprocessing.queues.Queue, debug: bool = True, log_file: str = None):
         print("Initializing crypto.com user api worker for user: {}".format(crypto_com_client.crypto_com_user))
         self.debug = debug
         self.log_file = log_file if log_file else "./logs/crypto_com_user_api_worker_{}.log".format(crypto_com_client.crypto_com_user)
@@ -34,15 +34,21 @@ class CryptoComUserApiWorker:
         self.shared_market_data = shared_market_data
         self.shared_user_api_data = shared_user_api_data
         self.buy_sell_requests_queue = buy_sell_requests_queue
+        self.postponed_requests_queue = Queue()
+        self.crypto_com_api_client = None
+        self.initializing = False
+        self.initial_requests_list = []
+        self.initialized = False
+        self.periodic_calls = []
 
-    async def get_instruments(self, client: CryptoClient):
+    async def get_instruments(self):
         '''
         Provides information on all supported instruments (e.g. BTC_USDT)
         '''
-        if client.authenticated:
+        if self.crypto_com_api_client.authenticated:
             try:
-                await client.send(
-                    client.build_message(
+                await self.crypto_com_api_client.send(
+                    self.crypto_com_api_client.build_message(
                         method="public/get-instruments"
                     )
                 )
@@ -50,17 +56,17 @@ class CryptoComUserApiWorker:
                 pass  # That's not a critical request - no need to retransmit
             except asyncio.TimeoutError as e:
                 pass  # That's not a critical request - no need to retransmit
-        else:
-            self.logger.warning("Websocket connection not authenticated! Cannot send public/get-instruments request.")
+        # else:
+        #     self.logger.warning("Websocket connection not authenticated! Cannot send public/get-instruments request.")
 
-    def handle_response_get_instruments(self, event: dict):
+    def handle_response_get_instruments(self, response: dict):
         '''
         Update the decimals for each used ticker
         '''
-        self.logger.info("Received response for public/get-instruments method with id: {}".format(event["id"]))
+        self.logger.info("Received response for public/get-instruments method with id: {}".format(response["id"]))
         for ticker, decimals in self.shared_user_api_data["tickers"].items():
             try:
-                for instrument in event["result"]["instruments"]:
+                for instrument in response["result"]["instruments"]:
                     if instrument["instrument_name"] == ticker and instrument.keys() >= decimals.keys():
                         for decimal in decimals.keys():
                             # update the decimal values for the ticker - NOTE! the shared data is updated this way on purpose!
@@ -77,16 +83,71 @@ class CryptoComUserApiWorker:
                 if value == 0:
                     raise Exception("The decimals for ticker: {} have not been updated.".format(ticker))
 
+    async def get_user_balances(self):
+        '''
+        Returns the account balance of a user for all tokens/coins.
+        To be triggered only after websockets disconnection.
+        '''
+        if self.crypto_com_api_client.authenticated:
+            request = self.crypto_com_api_client.build_message(
+                method="private/get-account-summary",
+                params={}
+            )
+            try:
+                await self.crypto_com_api_client.send(request)
+            except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
+                # Put the request to the retransmission queue and retry when the websocket is again authenticated
+                self.logger.warning("Websocket disconnected - putting request with id {} to postponed requests queue!".format(request["id"]))
+                self.postponed_requests_queue.put(request)
+            except asyncio.TimeoutError as e:
+                # Put the request to the retransmission queue and retry when the websocket is again authenticated
+                self.logger.warning("Timeout on sending request with id {} - putting request to postponed requests queue!".format(request["id"]))
+                self.postponed_requests_queue.put(request)
+        else:
+            self.logger.warning("Websocket connection not authenticated! Cannot send private/get-account-summary request.")
+
+    def handle_response_get_user_balances(self, response: dict):
+        '''
+        "accounts": [
+            {
+                "balance": 99999999.905000000000000000,
+                "available": 99999996.905000000000000000,
+                "order": 3.000000000000000000,
+                "stake": 0,
+                "currency": "CRO"
+            }
+        ]
+        '''
+        try:
+            self.logger.info("Received response for private/get-account-summary method with id: {}".format(response["id"]))
+            for balance in response["result"]["accounts"]:
+                if balance["currency"] == "USDT":
+                    self.logger.info("Updated USDT balance.")
+                    self.shared_user_api_data["balance_USDT"] = balance["available"]
+                elif balance["currency"] == "BTC":
+                    self.logger.info("Updated BTC balance.")
+                    self.shared_user_api_data["balance_BTC"] = balance["available"]
+                elif balance["currency"] == "CRO":
+                    self.logger.info("Updated CRO balance.")
+                    self.shared_user_api_data["balance_CRO"] = balance["available"]
+        except Exception as e:
+            raise Exception("Wrong data structure in private/get-account-summary response: {}. Exception: {}".format(response, repr(e)))
+        else:
+            # Mark the method as initialized in self.initial_requests_list
+            for method_dict in self.initial_requests_list:
+                if method_dict["method"] == self.get_user_balances:
+                    method_dict["initialized"] = True
+
     def handle_channel_event_user_balance(self, event: dict):
         '''
         "data": [
-          {
-            "currency": "CRO",
-            "balance": 99999999947.99626,
-            "available": 99999988201.50826,
-            "order": 11746.488,
-            "stake": 0
-          }
+            {
+                "currency": "CRO",
+                "balance": 99999999947.99626,
+                "available": 99999988201.50826,
+                "order": 11746.488,
+                "stake": 0
+            }
         ]
         '''
         try:
@@ -104,23 +165,23 @@ class CryptoComUserApiWorker:
         except Exception as e:
             raise Exception("Wrong data structure in user.balance channel event. Exception: {}".format(repr(e)))
 
-    async def handle_buy_request(self, client: CryptoClient, request: dict):
-        if client.authenticated:
+    async def handle_buy_request(self, request: dict):
+        if self.crypto_com_api_client.authenticated:
             # TODO: Send the request to exchange
             pass
         else:
             # TODO: Add to local requests queue - postpone sending
             pass
 
-    async def handle_sell_request(self, client: CryptoClient, request: dict):
-        if client.authenticated:
+    async def handle_sell_request(self, request: dict):
+        if self.crypto_com_api_client.authenticated:
             # TODO: Send the request to exchange
             pass
         else:
             # TODO: Add to local requests queue - postpone sending
             pass
 
-    async def handle_buy_sell_requests(self, client: CryptoClient):
+    async def handle_buy_sell_requests(self):
         '''
         The incoming request should be a dict with the following keys:
         {
@@ -140,16 +201,53 @@ class CryptoComUserApiWorker:
                         # Compare the price from request with current market price from crypto.com
                         price_on_crypto_com = self.shared_market_data["price_BTC_buy_for_USDT"]
                         self.logger.info("[BUY REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
-                        await self.handle_buy_request(client, request)
+                        await self.handle_buy_request(request)
                     elif request["type"] == "sell":
                         # Compare the price from request with current market price from crypto.com
                         price_on_crypto_com = self.shared_market_data["price_BTC_sell_to_USDT"]
                         self.logger.info("[SELL REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
-                        await self.handle_sell_request(client, request)
+                        await self.handle_sell_request(request)
                     else:
                         raise Exception("Unknown 'type' key value in buy/sell request! Request: {}".format(request))
                 else:
                     raise Exception("The incoming buy/sell request doesn't contain required keys! Request: {}".format(request))
+
+    async def send_postponed_requests(self):
+        if self.crypto_com_api_client.authenticated:
+            try:
+                request = self.postponed_requests_queue.get_nowait()
+            except Empty:
+                pass
+            else:
+                if request:
+                    try:
+                        await self.crypto_com_api_client.send(request)
+                    except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
+                        # Put the request back for retransmission - shit happens ;]
+                        self.logger.warning("Websocket disconnected - putting request with id {} to postponed requests queue - again!".format(request["id"]))
+                        self.postponed_requests_queue.put(request)
+                    except asyncio.TimeoutError as e:
+                        # Put the request back for retransmission - shit happens ;]
+                        self.logger.warning("Timeout on sending request with id {} - putting request to postponed requests queue!".format(request["id"]))
+                        self.postponed_requests_queue.put(request)
+                    except Exception as e:
+                        self.logger.exception("Exception during sending postponed request with id: {}. Exception: {}".format(request["id"], repr(e)))
+                        e.args = ("Exception during sending postponed request with id: {}. ".format(request["id"]) + str(e),)
+                        raise
+
+    def observer_for_client_authentication_state(self, authenticated):
+        if authenticated:
+            self.initializing = True
+        else:
+            self.initialized = False
+            if self.initial_requests_list:
+                for method_dict in self.initial_requests_list:
+                    method_dict["initialized"] = False
+
+    async def send_initial_requests(self):
+        for method_dict in self.initial_requests_list:
+            if not method_dict["initialized"]:
+                await method_dict["method"]()
 
     async def run(self):
 
@@ -176,50 +274,97 @@ class CryptoComUserApiWorker:
         event_dispatcher = EventDispatcher()
         event_dispatcher.register_channel_handling_method("user.balance", self.handle_channel_event_user_balance)
         event_dispatcher.register_response_handling_method("public/get-instruments", self.handle_response_get_instruments)
+        event_dispatcher.register_response_handling_method("private/get-account-summary", self.handle_response_get_user_balances)
 
-        async with CryptoClient(
-                client_type=CryptoClient.USER,
+        self.crypto_com_api_client = CryptoComApiClient(
+                client_type=CryptoComApiClient.USER,
                 debug=self.debug,
                 logger=self.logger,
+                observer_for_authenticated=self.observer_for_client_authentication_state,
                 api_key=self.crypto_com_client.crypto_com_api_key,
                 api_secret=self.crypto_com_client.crypto_com_secret_key,
                 channels=[
                     "user.balance"
                 ]
-        ) as client:
-            periodic_call_get_instruments = PeriodicAsync(5, lambda: self.get_instruments(client))
-            await periodic_call_get_instruments.start()
-            try:
-                while True:
-                    # Handle externally injected buy/sell requests
-                    try:
-                        await self.handle_buy_sell_requests(client)
-                    except Exception as e:
-                        message = "Exception during handling buy/sell request: {}".format(repr(e))
-                        self.logger.exception(message)
-                        # TODO: Send pushover notification here with message
-                        await asyncio.sleep(1)
-                        continue
+        )
 
-                    # Main response / channel event handling loop
-                    event_or_response = None
-                    try:
-                        event_or_response = await client.next_event_or_response()
-                        event_dispatcher.dispatch(event_or_response)
-                    except Exception as e:
-                        if event_or_response:
-                            message = "Exception during handling user api event or response: {}".format(repr(e))
-                            self.logger.exception(message)
-                            self.logger.error("Event or response that failed: {}".format(event_or_response))
-                        else:
-                            message = "Exception during parsing user api event or response: {}".format(repr(e))
-                            self.logger.exception(message)
-                        # TODO: Send pushover notification here with message
-                        await asyncio.sleep(1)
-                        continue
-            finally:
-                self.logger.info("Cleanup before closing worker...")
-                await periodic_call_get_instruments.stop()
+        periodic_call_get_instruments = PeriodicAsync(5, lambda: self.get_instruments())
+        self.periodic_calls.append(periodic_call_get_instruments)
+        await periodic_call_get_instruments.start()
+
+        self.initial_requests_list.append(
+            {
+                "method": self.get_user_balances,
+                "api_method": "private/get-account-summary",
+                "initialized": False
+            }
+        )
+
+        while True:
+            # Send initial requests
+            if self.initializing:
+                try:
+                    await self.send_initial_requests()
+                except Exception as e:
+                    message = "Exception during initial requests sending: {}".format(repr(e))
+                    self.logger.exception(message)
+                    # TODO: Send pushover notification here with message
+                    await asyncio.sleep(1)
+                else:
+                    self.initializing = False
+            elif not self.initialized:
+                # Check if all initial methods are already initialized (the responses already handled)
+                for method_dict in self.initial_requests_list:
+                    self.initialized = self.initialized and method_dict["initialized"]
+
+            # Send postponed requests (eg. due to websocket disconnection)
+            try:
+                await self.send_postponed_requests()
+            except Exception as e:
+                message = "Exception during sending postponed request: {}".format(repr(e))
+                self.logger.exception(message)
+                # TODO: Send pushover notification here with message
+                await asyncio.sleep(1)
+
+            # Handle externally injected buy/sell requests
+            if self.initialized:
+                try:
+                    await self.handle_buy_sell_requests()
+                except Exception as e:
+                    message = "Exception during handling buy/sell request: {}".format(repr(e))
+                    self.logger.exception(message)
+                    # TODO: Send pushover notification here with message
+                    await asyncio.sleep(1)
+
+            # Main response / channel event handling loop
+            event_or_response = None
+            try:
+                event_or_response = await self.crypto_com_api_client.next_event_or_response()
+                event_dispatcher.dispatch(event_or_response)
+            except Exception as e:
+                message = None
+                if event_or_response:
+                    # Check if that's been a response for one of the initial requests
+                    if "method" in event_or_response:
+                        for method_dict in self.initial_requests_list:
+                            if method_dict["api_method"] == event_or_response["method"]:
+                                self.initializing = True
+                                break
+                        message = "Exception during handling user api response: {}".format(repr(e))
+                    else:
+                        message = "Exception during handling user api event: {}".format(repr(e))
+                    self.logger.exception(message)
+                    self.logger.error("Event or response that failed: {}".format(event_or_response))
+                else:
+                    message = "Exception during parsing user api event or response: {}".format(repr(e))
+                    self.logger.exception(message)
+                # TODO: Send pushover notification here with message
+                await asyncio.sleep(1)
+
+    async def cleanup(self):
+        self.logger.info("Cleanup before closing worker...")
+        for periodic_call in self.periodic_calls:
+            await periodic_call.stop()
 
     def run_forever(self):
         # executor = ProcessPoolExecutor(2)  # Alternatively ThreadPoolExecutor
@@ -232,7 +377,9 @@ class CryptoComUserApiWorker:
                 loop.run_until_complete(self.run())
             except KeyboardInterrupt:
                 self.logger.info("Interrupted")
+                asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
+                self.logger.info("Bye bye!")
                 try:
                     sys.exit(0)
                 except SystemExit:
@@ -240,6 +387,7 @@ class CryptoComUserApiWorker:
             except Exception as e:
                 self.logger.exception(e)
             finally:
+                asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
                 self.logger.info("Bye bye!")
 

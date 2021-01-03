@@ -9,9 +9,8 @@ from flask import Flask, current_app
 from flask_classful import FlaskView, route
 from flask import Flask, request, abort
 
-#app = Flask(__name__)
 
-class Webhook_bot():
+class WebhookBot(object):
 
     def __init__(self, webhook_pin: str, buy_sell_requests_queues_collection: dict):
         print("Initializing webhook bot...")

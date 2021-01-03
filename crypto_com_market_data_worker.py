@@ -3,11 +3,11 @@ import sys
 import asyncio
 import logging
 from event_dispatcher import EventDispatcher
-from crypto_com_lib import CryptoClient
+from crypto_com_lib import CryptoComApiClient
 from pid import PidFile
 
 
-class CryptoComMarketDataWorker:
+class CryptoComMarketDataWorker(object):
 
     def __init__(self, shared_market_data: dict, debug: bool = True, log_file: str = None):
         print("Initializing crypto.com market data worker...")
@@ -25,6 +25,7 @@ class CryptoComMarketDataWorker:
         self.logger.addHandler(ch)
         self.logger.addHandler(fh)
         self.shared_market_data = shared_market_data
+        self.crypto_com_api_client = None
 
     def handle_channel_event_ticker_BTC_USDT(self, event: dict):
         '''
@@ -67,35 +68,34 @@ class CryptoComMarketDataWorker:
         event_dispatcher.register_channel_handling_method("ticker.CRO_USDT", self.handle_channel_event_ticker_CRO_USDT)
         event_dispatcher.register_channel_handling_method("ticker.CRO_BTC", self.handle_channel_event_ticker_CRO_BTC)
 
-        async with CryptoClient(
-                client_type=CryptoClient.MARKET,
-                debug=self.debug,
-                logger=self.logger,
-                channels=[
-                    "ticker.BTC_USDT",
-                    "ticker.CRO_USDT",
-                    "ticker.CRO_BTC",
-                ]
-        ) as client:
+        self.crypto_com_api_client = CryptoComApiClient(
+            client_type=CryptoComApiClient.MARKET,
+            debug=self.debug,
+            logger=self.logger,
+            channels=[
+                "ticker.BTC_USDT",
+                "ticker.CRO_USDT",
+                "ticker.CRO_BTC",
+            ]
+        )
+        while True:
+            # Main response / channel event handling loop
+            event_or_response = None
             try:
-                while True:
-                    # Main response / channel event handling loop
-                    event_or_response = None
-                    try:
-                        event_or_response = await client.next_event_or_response()
-                        event_dispatcher.dispatch(event_or_response)
-                    except Exception as e:
-                        if event_or_response:
-                            message = "Exception during handling market data event or response: {}".format(repr(e))
-                            self.logger.exception(message)
-                            self.logger.error("Event or response that failed: {}".format(event_or_response))
-                        else:
-                            message = "Exception during parsing market data event or response: {}".format(repr(e))
-                            self.logger.exception(message)
-                        # TODO: Send pushover notification here with message
-                        continue
-            finally:
-                self.logger.info("Cleanup before closing worker...")
+                event_or_response = await self.crypto_com_api_client.next_event_or_response()
+                event_dispatcher.dispatch(event_or_response)
+            except Exception as e:
+                if event_or_response:
+                    message = "Exception during handling market data event or response: {}".format(repr(e))
+                    self.logger.exception(message)
+                    self.logger.error("Event or response that failed: {}".format(event_or_response))
+                else:
+                    message = "Exception during parsing market data event or response: {}".format(repr(e))
+                    self.logger.exception(message)
+                # TODO: Send pushover notification here with message
+
+    async def cleanup(self):
+        self.logger.info("Cleanup before closing worker...")
 
     # Process execution method
     def run_forever(self):
@@ -105,7 +105,9 @@ class CryptoComMarketDataWorker:
                 loop.run_until_complete(self.run())
             except KeyboardInterrupt:
                 self.logger.info("Interrupted")
+                asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
+                self.logger.info("Bye bye!")
                 try:
                     sys.exit(0)
                 except SystemExit:
@@ -113,6 +115,7 @@ class CryptoComMarketDataWorker:
             except Exception as e:
                 self.logger.exception(e)
             finally:
+                asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
                 self.logger.info("Bye bye!")
 

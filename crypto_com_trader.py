@@ -8,7 +8,7 @@ import sys
 import getopt
 import traceback
 import ntpath
-from webhook_bot import Webhook_bot
+from webhook_bot import WebhookBot
 from crypto_com_user_api_worker import CryptoComUserApiWorker
 from crypto_com_client import CryptoComClient
 from crypto_com_market_data_worker import CryptoComMarketDataWorker
@@ -189,7 +189,7 @@ if __name__ == '__main__':
                 crypto_com_user_api_worker_process.start()
 
             print("Starting webhook bot...")
-            webhook_bot = Webhook_bot(local_webhook_server_pin, buy_sell_requests_queues_collection)
+            webhook_bot = WebhookBot(local_webhook_server_pin, buy_sell_requests_queues_collection)
             webhook_bot.start_bot()
 
             # Wait for processes to finish their jobs
