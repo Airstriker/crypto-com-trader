@@ -13,10 +13,11 @@ from flask import Flask, request, abort
 
 class Webhook_bot():
 
-    def __init__(self, webhook_pin):
+    def __init__(self, webhook_pin: str, buy_sell_requests_queues_collection: dict):
         print("Initializing webhook bot...")
 
         self.webhook_pin = webhook_pin
+        self.buy_sell_requests_queues_collection = buy_sell_requests_queues_collection
         print("***********************************************************************************************************************************************")
         print("TradingView Alert string to be used (just copy and paste it):")
         print(
@@ -37,6 +38,7 @@ class Webhook_bot():
 
         # init variables (accessible in views)
         app.config['SECRET_KEY'] = self.get_token()
+        app.config['SHARED_QUEUES'] = self.buy_sell_requests_queues_collection
         return app
 
     def start_bot(self):
@@ -68,6 +70,10 @@ class WebhookView(FlaskView):
                 print("[Alert Received]")
                 print("POST Received:")
                 pprint.pprint(data)
+                # Add the request to each client's queue
+                buy_sell_requests_queues_collection = current_app.config['SHARED_QUEUES']
+                for buy_sell_requests_queue in buy_sell_requests_queues_collection.values():
+                    buy_sell_requests_queue.put(data)
                 return '', 200
             else:
                 print("Wrong token received!")

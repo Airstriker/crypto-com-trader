@@ -21,6 +21,7 @@ pushover_clients = []
 crypto_com_clients = []
 shared_market_data = None
 shared_user_api_data_collection = {}
+buy_sell_requests_queues_collection = {}
 
 
 def get_user_specific_log_from_general_one(path, user):
@@ -123,8 +124,10 @@ if __name__ == '__main__':
             pushover_client = find_matching_pushover_client_for_crypto_com_user(pushover_clients, pushover_user_keys, crypto_com_user)
             crypto_com_clients.append(CryptoComClient(crypto_com_api_stuff["api_key"], crypto_com_api_stuff["secret_key"], crypto_com_user, user_crypto_com_log_path, user_crypto_com_transactions_log_path, pushover_client))
 
+        # **************************************************************************************************************
+        # Shared data definition
+        # **************************************************************************************************************
         manager = Manager()
-
         shared_market_data = manager.dict({
             "taker_fee": exchange_variables["taker_fee"],
             "CRO_holding_backup": exchange_variables["CRO_holding_backup"],
@@ -164,8 +167,13 @@ if __name__ == '__main__':
                 "balance_CRO": 0
             })
             shared_user_api_data_collection[crypto_com_client.crypto_com_user] = shared_user_api_data
+            buy_sell_requests_queue = manager.Queue()
+            buy_sell_requests_queues_collection[crypto_com_client.crypto_com_user] = buy_sell_requests_queue
 
-        periodic_printer = PeriodicNormal(5, print_periodically_shared_data)
+        # **************************************************************************************************************
+
+        if debug:
+            periodic_printer = PeriodicNormal(5, print_periodically_shared_data)
         try:
             print("Starting crypto.com market data worker...")
             crypto_com_market_data_worker = CryptoComMarketDataWorker(shared_market_data, debug=False)
@@ -175,13 +183,13 @@ if __name__ == '__main__':
             print("Starting crypto.com user api workers...")
             crypto_com_user_api_worker_processes = {}
             for crypto_com_client in crypto_com_clients:
-                crypto_com_user_api_worker = CryptoComUserApiWorker(crypto_com_client=crypto_com_client, shared_user_api_data=shared_user_api_data_collection[crypto_com_client.crypto_com_user], shared_market_data=shared_market_data, debug=False)
+                crypto_com_user_api_worker = CryptoComUserApiWorker(crypto_com_client=crypto_com_client, shared_user_api_data=shared_user_api_data_collection[crypto_com_client.crypto_com_user], shared_market_data=shared_market_data, buy_sell_requests_queue=buy_sell_requests_queues_collection[crypto_com_client.crypto_com_user], debug=False)
                 crypto_com_user_api_worker_process = Process(target=crypto_com_user_api_worker.run_forever, args=())
                 crypto_com_user_api_worker_processes[crypto_com_client.crypto_com_user] = crypto_com_user_api_worker_process
                 crypto_com_user_api_worker_process.start()
 
             print("Starting webhook bot...")
-            webhook_bot = Webhook_bot(local_webhook_server_pin)
+            webhook_bot = Webhook_bot(local_webhook_server_pin, buy_sell_requests_queues_collection)
             webhook_bot.start_bot()
 
             # Wait for processes to finish their jobs
@@ -190,8 +198,9 @@ if __name__ == '__main__':
             crypto_com_market_data_worker_process.join()
 
         finally:
-            print("Workers finished their job - cleaning up periodics...")
-            periodic_printer.stop()
+            if debug:
+                print("Workers finished their job - cleaning up periodics...")
+                periodic_printer.stop()
 
     except KeyboardInterrupt:
         print('Interrupted')

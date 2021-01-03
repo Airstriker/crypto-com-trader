@@ -7,13 +7,15 @@ import socket
 from event_dispatcher import EventDispatcher
 from crypto_com_client import CryptoComClient
 from crypto_com_lib import CryptoClient
+from multiprocessing.queues import Queue
+from queue import Empty
 from periodic import PeriodicAsync
 from pid import PidFile
 
 
 class CryptoComUserApiWorker:
 
-    def __init__(self, crypto_com_client: CryptoComClient, shared_user_api_data: dict, shared_market_data: dict, debug: bool = True, log_file: str = None):
+    def __init__(self, crypto_com_client: CryptoComClient, shared_user_api_data: dict, shared_market_data: dict, buy_sell_requests_queue: Queue, debug: bool = True, log_file: str = None):
         print("Initializing crypto.com user api worker for user: {}".format(crypto_com_client.crypto_com_user))
         self.debug = debug
         self.log_file = log_file if log_file else "./logs/crypto_com_user_api_worker_{}.log".format(crypto_com_client.crypto_com_user)
@@ -31,6 +33,7 @@ class CryptoComUserApiWorker:
         self.crypto_com_client = crypto_com_client
         self.shared_market_data = shared_market_data
         self.shared_user_api_data = shared_user_api_data
+        self.buy_sell_requests_queue = buy_sell_requests_queue
 
     async def get_instruments(self, client: CryptoClient):
         '''
@@ -44,6 +47,8 @@ class CryptoComUserApiWorker:
                     )
                 )
             except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
+                pass  # That's not a critical request - no need to retransmit
+            except asyncio.TimeoutError as e:
                 pass  # That's not a critical request - no need to retransmit
         else:
             self.logger.warning("Websocket connection not authenticated! Cannot send public/get-instruments request.")
@@ -88,16 +93,63 @@ class CryptoComUserApiWorker:
             self.logger.info("Received balance update. Event: {}".format(event["data"]))
             for balance in event["data"]:
                 if balance["currency"] == "USDT":
-                    print("Updated USDT balance")
+                    self.logger.info("Updated USDT balance.")
                     self.shared_user_api_data["balance_USDT"] = balance["available"]
                 elif balance["currency"] == "BTC":
-                    print("Updated BTC balance")
+                    self.logger.info("Updated BTC balance.")
                     self.shared_user_api_data["balance_BTC"] = balance["available"]
                 elif balance["currency"] == "CRO":
-                    print("Updated CRO balance")
+                    self.logger.info("Updated CRO balance.")
                     self.shared_user_api_data["balance_CRO"] = balance["available"]
         except Exception as e:
             raise Exception("Wrong data structure in user.balance channel event. Exception: {}".format(repr(e)))
+
+    async def handle_buy_request(self, client: CryptoClient, request: dict):
+        if client.authenticated:
+            # TODO: Send the request to exchange
+            pass
+        else:
+            # TODO: Add to local requests queue - postpone sending
+            pass
+
+    async def handle_sell_request(self, client: CryptoClient, request: dict):
+        if client.authenticated:
+            # TODO: Send the request to exchange
+            pass
+        else:
+            # TODO: Add to local requests queue - postpone sending
+            pass
+
+    async def handle_buy_sell_requests(self, client: CryptoClient):
+        '''
+        The incoming request should be a dict with the following keys:
+        {
+            'price': '25420',
+            'type': 'sell'
+        }
+        '''
+        try:
+            request = self.buy_sell_requests_queue.get_nowait()
+        except Empty:
+            pass
+        else:
+            if request:
+                if "type" in request and "price" in request:
+                    price_in_request = request["price"]
+                    if request["type"] == "buy":
+                        # Compare the price from request with current market price from crypto.com
+                        price_on_crypto_com = self.shared_market_data["price_BTC_buy_for_USDT"]
+                        self.logger.info("[BUY REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
+                        await self.handle_buy_request(client, request)
+                    elif request["type"] == "sell":
+                        # Compare the price from request with current market price from crypto.com
+                        price_on_crypto_com = self.shared_market_data["price_BTC_sell_to_USDT"]
+                        self.logger.info("[SELL REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
+                        await self.handle_sell_request(client, request)
+                    else:
+                        raise Exception("Unknown 'type' key value in buy/sell request! Request: {}".format(request))
+                else:
+                    raise Exception("The incoming buy/sell request doesn't contain required keys! Request: {}".format(request))
 
     async def run(self):
 
@@ -139,6 +191,17 @@ class CryptoComUserApiWorker:
             await periodic_call_get_instruments.start()
             try:
                 while True:
+                    # Handle externally injected buy/sell requests
+                    try:
+                        await self.handle_buy_sell_requests(client)
+                    except Exception as e:
+                        message = "Exception during handling buy/sell request: {}".format(repr(e))
+                        self.logger.exception(message)
+                        # TODO: Send pushover notification here with message
+                        await asyncio.sleep(1)
+                        continue
+
+                    # Main response / channel event handling loop
                     event_or_response = None
                     try:
                         event_or_response = await client.next_event_or_response()
@@ -152,6 +215,7 @@ class CryptoComUserApiWorker:
                             message = "Exception during parsing user api event or response: {}".format(repr(e))
                             self.logger.exception(message)
                         # TODO: Send pushover notification here with message
+                        await asyncio.sleep(1)
                         continue
             finally:
                 self.logger.info("Cleanup before closing worker...")
@@ -159,7 +223,7 @@ class CryptoComUserApiWorker:
 
     def run_forever(self):
         # executor = ProcessPoolExecutor(2)  # Alternatively ThreadPoolExecutor
-        # boo = asyncio.create_task(loop.run_in_executor(executor, say_boo))
+        # boo = asyncio.create_task(loop.run_in_executor(executor, say_boo))  # say_boo should be ordinary functions
         # baa = asyncio.create_task(loop.run_in_executor(executor, say_baa))
         # loop.run_forever()
         with PidFile(pidname="crypto_com_user_api_worker", piddir="./logs") as pidfile:

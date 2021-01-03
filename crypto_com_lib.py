@@ -23,12 +23,12 @@ class CryptoClient:
     USER_URI = "wss://stream.crypto.com/v2/user"
     SANDBOX_USER_URI = "wss://uat-stream.3ona.co/v2/user"
 
-    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, api_secret: str = None, api_key: str = None, websocket=None, ):
+    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, api_secret: str = None, api_key: str = None, ):
         self.api_secret = api_secret.encode() if api_key else None
         self.api_key = api_key
         self._next_id = 1
         self.channels = channels
-        self.websocket = websocket
+        self.websocket = None
         self.client_type = client_type
         self.debug = debug
         self.authenticated = False
@@ -64,11 +64,15 @@ class CryptoClient:
     async def send(self, message: dict):
         self.logger.info("sending request: {}".format(message))
         try:
-            await self.websocket.send(json.dumps(message))
+            await asyncio.wait_for(self.websocket.send(json.dumps(message)), timeout=5)
         except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
             self.authenticated = False
             self.logger.error("Websocket NOT connected. Message with id: {} not sent!".format(message["id"]))
             e.args = ("Websocket NOT connected. Message with id: {} not sent!".format(message["id"]),)
+            raise
+        except asyncio.TimeoutError as e:
+            self.logger.exception("Timeout on websocket.send() for message with id: {}!".format(message["id"]))
+            e.args = ("Timeout on websocket.send() for message with id: {}!".format(message["id"]),)
             raise
         except Exception as e:
             self.logger.exception("Exception during sending message with id: {}. Exception: {}".format(message["id"], repr(e)))
@@ -121,11 +125,15 @@ class CryptoClient:
                     self.logger.error("Websocket NOT connected. Trying to reconnect...")
                     # TODO: Send pushover notification here!
                     await self.websocket_connect()
-                message = await self.websocket.recv()
+                message = await asyncio.wait_for(self.websocket.recv(), timeout=31)  # At least Heartbeat should be received within 30 seconds
                 event_or_response = await self.parse_message(json.loads(message))
             except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
                 self.logger.error(repr(e))
                 await asyncio.sleep(1)
+                continue
+            except asyncio.TimeoutError as e:
+                self.logger.exception("Timeout on websocket.recv()!")
+                await self.websocket.close()  # For simpler flow
                 continue
             except Exception as e:
                 self.logger.exception("Exception during received message parsing: {}".format(repr(e)))
@@ -156,6 +164,7 @@ class CryptoClient:
                 if data["code"] == 0:
                     self.logger.info("Subscription success!")
                 else:
+                    await self.websocket.close()  # For simpler flow
                     raise Exception(f"Error when subscribing: {json.dumps(data)}")
         elif data["method"] == "public/auth":
             if data["code"] == 0:
@@ -164,6 +173,7 @@ class CryptoClient:
                 if self.channels:
                     await self.subscribe()
             else:
+                await self.websocket.close()  # For simpler flow
                 raise Exception(f"Auth error: {json.dumps(data)}")
         else:
             return data

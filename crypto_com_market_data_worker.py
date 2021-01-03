@@ -79,6 +79,7 @@ class CryptoComMarketDataWorker:
         ) as client:
             try:
                 while True:
+                    # Main response / channel event handling loop
                     event_or_response = None
                     try:
                         event_or_response = await client.next_event_or_response()
