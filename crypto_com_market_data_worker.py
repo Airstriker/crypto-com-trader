@@ -14,18 +14,23 @@ class CryptoComMarketDataWorker(object):
         self.debug = debug
         self.log_file = log_file if log_file else "./logs/crypto_com_market_data_worker.log"
         self.logger = logging.getLogger("crypto_com_market_data_worker")
-        self.logger.setLevel(logging.DEBUG)
-        fh = logging.FileHandler(self.log_file, mode="w")
+        CryptoComMarketDataWorker.setup_logger(self.logger, self.log_file)
+        self.shared_market_data = shared_market_data
+        self.crypto_com_api_client = None
+
+    @staticmethod
+    def setup_logger(logger, log_file):
+        logger.setLevel(logging.DEBUG)
+        fh = logging.FileHandler(log_file, mode="w")
         fh.setLevel(logging.DEBUG)
         ch = logging.StreamHandler()
         ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        fh.setFormatter(formatter)
-        self.logger.addHandler(ch)
-        self.logger.addHandler(fh)
-        self.shared_market_data = shared_market_data
-        self.crypto_com_api_client = None
+        console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        ch.setFormatter(console_formatter)
+        fh.setFormatter(file_formatter)
+        logger.addHandler(ch)
+        logger.addHandler(fh)
 
     def handle_channel_event_ticker_BTC_USDT(self, event: dict):
         '''

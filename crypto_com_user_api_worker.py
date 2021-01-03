@@ -15,21 +15,15 @@ from pid import PidFile
 
 class CryptoComUserApiWorker(object):
 
-    def __init__(self, crypto_com_client: CryptoComClient, shared_user_api_data: dict, shared_market_data: dict, buy_sell_requests_queue: multiprocessing.queues.Queue, debug: bool = True, log_file: str = None):
+    def __init__(self, crypto_com_client: CryptoComClient, shared_user_api_data: dict, shared_market_data: dict, buy_sell_requests_queue: multiprocessing.queues.Queue, debug: bool = True, log_file: str = None, transactions_log_file: str = None):
         print("Initializing crypto.com user api worker for user: {}".format(crypto_com_client.crypto_com_user))
         self.debug = debug
         self.log_file = log_file if log_file else "./logs/crypto_com_user_api_worker_{}.log".format(crypto_com_client.crypto_com_user)
         self.logger = logging.getLogger("crypto_com_user_api_worker_{}".format(crypto_com_client.crypto_com_user))
-        self.logger.setLevel(logging.DEBUG)
-        fh = logging.FileHandler(self.log_file, mode="w")
-        fh.setLevel(logging.DEBUG)
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        fh.setFormatter(formatter)
-        self.logger.addHandler(ch)
-        self.logger.addHandler(fh)
+        CryptoComUserApiWorker.setup_logger(self.logger, self.log_file)
+        self.transactions_log_file = transactions_log_file if transactions_log_file else "./logs/transactions_{}.log".format(crypto_com_client.crypto_com_user)
+        self.transactions_logger = logging.getLogger("transactions_logger_{}".format(crypto_com_client.crypto_com_user))
+        CryptoComUserApiWorker.setup_logger(self.transactions_logger, self.transactions_log_file)
         self.crypto_com_client = crypto_com_client
         self.shared_market_data = shared_market_data
         self.shared_user_api_data = shared_user_api_data
@@ -40,6 +34,20 @@ class CryptoComUserApiWorker(object):
         self.initial_requests_list = []
         self.initialized = False
         self.periodic_calls = []
+
+    @staticmethod
+    def setup_logger(logger, log_file):
+        logger.setLevel(logging.DEBUG)
+        fh = logging.FileHandler(log_file, mode="w")
+        fh.setLevel(logging.DEBUG)
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.DEBUG)
+        console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        ch.setFormatter(console_formatter)
+        fh.setFormatter(file_formatter)
+        logger.addHandler(ch)
+        logger.addHandler(fh)
 
     async def get_instruments(self):
         '''
@@ -166,20 +174,18 @@ class CryptoComUserApiWorker(object):
             raise Exception("Wrong data structure in user.balance channel event. Exception: {}".format(repr(e)))
 
     async def handle_buy_request(self, request: dict):
-        if self.crypto_com_api_client.authenticated:
-            # TODO: Send the request to exchange
-            pass
-        else:
-            # TODO: Add to local requests queue - postpone sending
-            pass
+        # Compare the price from request with current market price from crypto.com
+        price_in_request = request["price"]
+        price_on_crypto_com = self.shared_market_data["price_BTC_buy_for_USDT"]
+        self.logger.info("[BUY REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
+        self.transactions_logger.info("[BUY] Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
 
     async def handle_sell_request(self, request: dict):
-        if self.crypto_com_api_client.authenticated:
-            # TODO: Send the request to exchange
-            pass
-        else:
-            # TODO: Add to local requests queue - postpone sending
-            pass
+        # Compare the price from request with current market price from crypto.com
+        price_in_request = request["price"]
+        price_on_crypto_com = self.shared_market_data["price_BTC_sell_to_USDT"]
+        self.logger.info("[SELL REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
+        self.transactions_logger.info("[SELL] Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
 
     async def handle_buy_sell_requests(self):
         '''
@@ -196,16 +202,9 @@ class CryptoComUserApiWorker(object):
         else:
             if request:
                 if "type" in request and "price" in request:
-                    price_in_request = request["price"]
                     if request["type"] == "buy":
-                        # Compare the price from request with current market price from crypto.com
-                        price_on_crypto_com = self.shared_market_data["price_BTC_buy_for_USDT"]
-                        self.logger.info("[BUY REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
                         await self.handle_buy_request(request)
                     elif request["type"] == "sell":
-                        # Compare the price from request with current market price from crypto.com
-                        price_on_crypto_com = self.shared_market_data["price_BTC_sell_to_USDT"]
-                        self.logger.info("[SELL REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
                         await self.handle_sell_request(request)
                     else:
                         raise Exception("Unknown 'type' key value in buy/sell request! Request: {}".format(request))
@@ -314,8 +313,10 @@ class CryptoComUserApiWorker(object):
                     self.initializing = False
             elif not self.initialized:
                 # Check if all initial methods are already initialized (the responses already handled)
+                initialized = True
                 for method_dict in self.initial_requests_list:
-                    self.initialized = self.initialized and method_dict["initialized"]
+                    initialized = initialized and method_dict["initialized"]
+                self.initialized = initialized
 
             # Send postponed requests (eg. due to websocket disconnection)
             try:
