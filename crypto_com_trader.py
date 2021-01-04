@@ -8,6 +8,7 @@ import sys
 import getopt
 import traceback
 import ntpath
+import requests
 from webhook_bot import WebhookBot
 from crypto_com_user_api_worker import CryptoComUserApiWorker
 from crypto_com_client import CryptoComClient
@@ -30,6 +31,7 @@ def get_user_specific_log_from_general_one(path, user):
     directory = path.replace(filename, "")
     return directory + user + "_" + filename
 
+
 def find_matching_pushover_client_for_crypto_com_user(pushover_clients, pushover_user_keys, crypto_com_user):
     pushover_user_key = pushover_user_keys[crypto_com_user]
     for pushover_client in pushover_clients:
@@ -37,10 +39,25 @@ def find_matching_pushover_client_for_crypto_com_user(pushover_clients, pushover
             return pushover_client
     return None
 
-def print_periodically_shared_data():
+
+def print_shared_data():
     print("Market data: {}".format(shared_market_data))
     for crypto_com_client in crypto_com_clients:
         print("User data collection for user {}: {}".format(crypto_com_client.crypto_com_user, shared_user_api_data_collection[crypto_com_client.crypto_com_user]))
+
+
+def get_eur_usd_exchange_rate(url):
+    '''
+    Note! This is not a critical data - we can live without it
+    {"rates":{"USD":1.2271},"base":"EUR","date":"2020-12-31"}
+    '''
+    try:
+        r = requests.get(url, timeout=4)
+        data = r.json()
+        shared_market_data["EUR_USD_exchange_rate"] = data["rates"]["USD"]
+    except Exception as e:
+        pass
+
 
 if __name__ == '__main__':
     try:
@@ -109,6 +126,8 @@ if __name__ == '__main__':
 
                 exchange_variables = configdata["exchange_variables"]
 
+                eur_usd_exchange_rate_url = configdata["eur_usd_exchange_rate_url"]
+
             except Exception as e:
                 print("Error while loading config file: {}".format(str(e)))
                 exit()
@@ -143,7 +162,8 @@ if __name__ == '__main__':
             "fee_BTC_sell_in_CRO": 0,
             "price_BTC_buy_for_USDT": 0,
             "fee_BTC_buy_in_BTC": 0,
-            "fee_BTC_buy_in_CRO": 0
+            "fee_BTC_buy_in_CRO": 0,
+            "EUR_USD_exchange_rate": 0
         })  # Data shared between processes
 
         for crypto_com_client in crypto_com_clients:
@@ -164,7 +184,11 @@ if __name__ == '__main__':
                 },
                 "balance_USDT": 0,
                 "balance_BTC": 0,
-                "balance_CRO": 0
+                "balance_CRO": 0,
+                "last_transaction_BTC_buy_price_in_fiat": 0,
+                "last_transaction_BTC_buy_price_in_USDT": 0,
+                "last_transaction_BTC_sell_price_in_fiat": 0,
+                "last_transaction_BTC_sell_price_in_USDT": 0
             })
             shared_user_api_data_collection[crypto_com_client.crypto_com_user] = shared_user_api_data
             buy_sell_requests_queue = manager.Queue()
@@ -173,17 +197,18 @@ if __name__ == '__main__':
         # **************************************************************************************************************
 
         if debug:
-            periodic_printer = PeriodicNormal(5, print_periodically_shared_data)
+            periodic_printer = PeriodicNormal(5, print_shared_data)
+        periodic_eur_usd_exchange_rate_getter = PeriodicNormal(5, get_eur_usd_exchange_rate, eur_usd_exchange_rate_url)
         try:
             print("Starting crypto.com market data worker...")
-            crypto_com_market_data_worker = CryptoComMarketDataWorker(shared_market_data, debug=False)
+            crypto_com_market_data_worker = CryptoComMarketDataWorker(shared_market_data, debug=debug)
             crypto_com_market_data_worker_process = Process(target=crypto_com_market_data_worker.run_forever, args=())
             crypto_com_market_data_worker_process.start()
 
             print("Starting crypto.com user api workers...")
             crypto_com_user_api_worker_processes = {}
             for crypto_com_client in crypto_com_clients:
-                crypto_com_user_api_worker = CryptoComUserApiWorker(crypto_com_client=crypto_com_client, shared_user_api_data=shared_user_api_data_collection[crypto_com_client.crypto_com_user], shared_market_data=shared_market_data, buy_sell_requests_queue=buy_sell_requests_queues_collection[crypto_com_client.crypto_com_user], debug=False)
+                crypto_com_user_api_worker = CryptoComUserApiWorker(crypto_com_client=crypto_com_client, shared_user_api_data=shared_user_api_data_collection[crypto_com_client.crypto_com_user], shared_market_data=shared_market_data, buy_sell_requests_queue=buy_sell_requests_queues_collection[crypto_com_client.crypto_com_user], debug=debug)
                 crypto_com_user_api_worker_process = Process(target=crypto_com_user_api_worker.run_forever, args=())
                 crypto_com_user_api_worker_processes[crypto_com_client.crypto_com_user] = crypto_com_user_api_worker_process
                 crypto_com_user_api_worker_process.start()
@@ -201,6 +226,7 @@ if __name__ == '__main__':
             if debug:
                 print("Workers finished their job - cleaning up periodics...")
                 periodic_printer.stop()
+            periodic_eur_usd_exchange_rate_getter.stop()
 
     except KeyboardInterrupt:
         print('Interrupted')

@@ -176,16 +176,37 @@ class CryptoComUserApiWorker(object):
     async def handle_buy_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
         price_in_request = request["price"]
+        self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"] = price_in_request
         price_on_crypto_com = self.shared_market_data["price_BTC_buy_for_USDT"]
-        self.logger.info("[BUY REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
-        self.transactions_logger.info("[BUY] Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
+        self.shared_user_api_data["last_transaction_BTC_buy_price_in_USDT"] = price_on_crypto_com
+        fiat = request["fiat"]
+        eur_usd_exchange_rate = self.shared_market_data["EUR_USD_exchange_rate"]
+        if fiat == "EUR" and eur_usd_exchange_rate != 0:
+            price_in_request_in_usd = float(price_in_request) * float(eur_usd_exchange_rate)
+            self.logger.info("[BUY REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com))
+            self.transactions_logger.info("[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com))
+        else:
+            self.logger.info("[BUY REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com))
+            self.transactions_logger.info("[BUY] Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com))
 
     async def handle_sell_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
         price_in_request = request["price"]
+        self.shared_user_api_data["last_transaction_BTC_sell_price_in_fiat"] = price_in_request
         price_on_crypto_com = self.shared_market_data["price_BTC_sell_to_USDT"]
-        self.logger.info("[SELL REQUEST] received! Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
-        self.transactions_logger.info("[SELL] Price in request: {}. Price on crypto.com [USDT]: {}".format(price_in_request, price_on_crypto_com))
+        self.shared_user_api_data["last_transaction_BTC_sell_price_in_USDT"] = price_on_crypto_com
+        fiat = request["fiat"]
+        profit_in_fiat = (float(self.shared_user_api_data["last_transaction_BTC_sell_price_in_fiat"]) - float(self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"])) if self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"] else 0
+        profit_in_usdt = (float(self.shared_user_api_data["last_transaction_BTC_sell_price_in_USDT"]) - float(self.shared_user_api_data["last_transaction_BTC_buy_price_in_USDT"])) if self.shared_user_api_data["last_transaction_BTC_buy_price_in_USDT"] else 0
+        eur_usd_exchange_rate = self.shared_market_data["EUR_USD_exchange_rate"]
+        if fiat == "EUR" and eur_usd_exchange_rate != 0:
+            price_in_request_in_usd = float(price_in_request) * float(eur_usd_exchange_rate)
+            profit_in_fiat_in_usd = float(profit_in_fiat) * float(eur_usd_exchange_rate)
+            self.logger.info("[SELL REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
+            self.transactions_logger.info("[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
+        else:
+            self.logger.info("[SELL REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt))
+            self.transactions_logger.info("[SELL] Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt))
 
     async def handle_buy_sell_requests(self):
         '''
@@ -201,7 +222,7 @@ class CryptoComUserApiWorker(object):
             pass
         else:
             if request:
-                if "type" in request and "price" in request:
+                if "type" in request and "price" in request and "fiat" in request:
                     if request["type"] == "buy":
                         await self.handle_buy_request(request)
                     elif request["type"] == "sell":

@@ -200,10 +200,9 @@ class CryptoComApiClient(object):
             return data
 
     async def websocket_connect(self):
-        if self.debug:
-            websocket_uri = self.SANDBOX_MARKET_URI if self.client_type == self.MARKET else self.SANDBOX_USER_URI
-        else:
-            websocket_uri = self.MARKET_URI if self.client_type == self.MARKET else self.USER_URI
+        websocket_uri = self.MARKET_URI if self.client_type == self.MARKET else self.USER_URI
+        # if self.debug:
+        #     websocket_uri = self.SANDBOX_MARKET_URI if self.client_type == self.MARKET else self.SANDBOX_USER_URI
         self.logger.info("Connecting to websocket: {}...".format(websocket_uri))
         self.websocket = await websockets.connect(websocket_uri)
         await asyncio.sleep(1)  # As requested by crypto.com API

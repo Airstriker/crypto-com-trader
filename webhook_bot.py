@@ -20,7 +20,7 @@ class WebhookBot(object):
         print("***********************************************************************************************************************************************")
         print("TradingView Alert string to be used (just copy and paste it):")
         print(
-            '{"type": "{{strategy.order.action}}", "price": "{{strategy.order.price}}", "token": "' + self.get_token() + '"}')
+            '{"type": "{{strategy.order.action}}", "price": "{{strategy.order.price}}", "fiat": "EUR", "token": "' + self.get_token() + '"}')
         print("***********************************************************************************************************************************************")
 
         # Create Flask object called app.
