@@ -85,18 +85,15 @@ class CryptoComMarketDataWorker(object):
         )
         while True:
             # Main response / channel event handling loop
+            await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
             event_or_response = None
             try:
-                event_or_response = await self.crypto_com_api_client.next_event_or_response()
+                event_or_response = await self.crypto_com_api_client.get_event_or_response()
                 event_dispatcher.dispatch(event_or_response)
             except Exception as e:
-                if event_or_response:
-                    message = "Exception during handling market data event or response: {}".format(repr(e))
-                    self.logger.exception(message)
-                    self.logger.error("Event or response that failed: {}".format(event_or_response))
-                else:
-                    message = "Exception during parsing market data event or response: {}".format(repr(e))
-                    self.logger.exception(message)
+                message = "Exception during handling market data event or response: {}".format(repr(e))
+                self.logger.exception(message)
+                self.logger.error("Event or response that failed: {}".format(event_or_response))
                 # TODO: Send pushover notification here with message
 
     async def cleanup(self):

@@ -94,11 +94,11 @@ class PeriodicNormal(object):
         if not self.is_started:
             self._timer = Timer(self.interval, self._run)
             self._timer.start()
-            self.is_running = True
+            self.is_started = True
 
     def stop(self):
         self._timer.cancel()
-        self.is_running = False
+        self.is_started = False
 
     def _run(self):
         self.is_started = False

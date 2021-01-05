@@ -11,6 +11,7 @@ import time
 import logging
 import socket
 from typing import List, Callable
+from queue import Empty, Queue
 
 
 class CryptoComApiClient(object):
@@ -31,6 +32,8 @@ class CryptoComApiClient(object):
         self.websocket = None
         self.client_type = client_type
         self.debug = debug
+        self.requests_queue = Queue()
+        self.events_and_responses_queue = Queue()
         self._authenticated = False
         self._authenticated_observers = []  # Supporting only normal (not async (coroutines)) callbacks
         if observer_for_authenticated:
@@ -49,6 +52,9 @@ class CryptoComApiClient(object):
             fh.setFormatter(formatter)
             self.logger.addHandler(ch)
             self.logger.addHandler(fh)
+
+        # Start itself !
+        self.run()
 
     @property
     def authenticated(self):
@@ -73,29 +79,14 @@ class CryptoComApiClient(object):
         self._next_id += 1
         return i
 
-    async def authenticate(self):
+    def authenticate(self):
         self.logger.info("Authenticating using the API key: {}...".format(self.api_key))
-        await self.send(self.build_message(
+        self.send(self.build_message(
             method="public/auth"
         ))
 
-    async def send(self, message: dict):
-        self.logger.info("sending request: {}".format(message))
-        try:
-            await asyncio.wait_for(self.websocket.send(json.dumps(message)), timeout=5)
-        except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
-            self.authenticated = False
-            self.logger.error("Websocket NOT connected. Message with id: {} not sent!".format(message["id"]))
-            e.args = ("Websocket NOT connected. Message with id: {} not sent!".format(message["id"]),)
-            raise
-        except asyncio.TimeoutError as e:
-            self.logger.exception("Timeout on websocket.send() for message with id: {}!".format(message["id"]))
-            e.args = ("Timeout on websocket.send() for message with id: {}!".format(message["id"]),)
-            raise
-        except Exception as e:
-            self.logger.exception("Exception during sending message with id: {}. Exception: {}".format(message["id"], repr(e)))
-            e.args = ("Exception during sending message with id: {}. ".format(message["id"]) + str(e),)
-            raise
+    def send(self, request: dict):
+        self.requests_queue.put(request)
 
     def build_message(self, method: str, params: dict = None, **kwargs):
         message = {
@@ -133,9 +124,55 @@ class CryptoComApiClient(object):
 
         return message
 
-    async def next_event_or_response(self):
-        event_or_response = None
-        while event_or_response is None:
+    async def handle_requests(self):
+        while True:
+            await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
+            if self.websocket and self.websocket.open:
+                try:
+                    request = self.requests_queue.get_nowait()
+                except Empty:
+                    pass
+                else:
+                    # Check if request requires authentication
+                    if not self.authenticated and request["method"] not in ["public/respond-heartbeat", "public/auth", "subscribe"]:
+                        # Put it back to the queue
+                        self.requests_queue.put(request)
+                        continue
+
+                    self.logger.info("sending request: {}".format(request))
+                    try:
+                        await self.websocket.send(json.dumps(request))
+                    except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
+                        self.logger.error("Websocket NOT connected. Request with id: {} not sent! Putting it back to queue.".format(request["id"]))
+                        self.requests_queue.put(request)
+                        await asyncio.sleep(1)
+                    except Exception as e:
+                        self.logger.exception("Exception during sending request with id: {}. Putting it back to queue. Exception: {}".format(request["id"], repr(e)))
+                        self.requests_queue.put(request)
+                        # TODO: Send pushover notification here!
+                        await asyncio.sleep(1)
+
+    async def get_event_or_response(self):
+        while True:
+            await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
+            try:
+                event_or_response = self.events_and_responses_queue.get_nowait()
+            except Empty:
+                continue
+            else:
+                return event_or_response
+
+    def get_event_or_response_no_wait(self):
+        try:
+            event_or_response = self.events_and_responses_queue.get_nowait()
+        except Empty:
+            return None
+        else:
+            return event_or_response
+
+    async def handle_events_and_responses(self):
+        while True:
+            await asyncio.sleep(0)
             message = None
             try:
                 if not self.websocket or not self.websocket.open:
@@ -144,29 +181,24 @@ class CryptoComApiClient(object):
                         self.logger.error("Websocket NOT connected. Trying to reconnect...")
                         # TODO: Send pushover notification here!
                     await self.websocket_connect()
-                message = await asyncio.wait_for(self.websocket.recv(), timeout=31)  # At least Heartbeat should be received within 30 seconds
+                message = await self.websocket.recv()
                 event_or_response = await self.parse_message(json.loads(message))
-            except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
+                if event_or_response:
+                    self.events_and_responses_queue.put(event_or_response)
+            except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError,
+                    socket.gaierror, OSError) as e:
                 self.logger.error(repr(e))
                 await asyncio.sleep(1)
-                continue
-            except asyncio.TimeoutError as e:
-                self.logger.exception("Timeout on websocket.recv()!")
-                await self.websocket_disconnect()  # For simpler flow
-                self.authenticated = False
-                continue
             except Exception as e:
                 self.logger.exception("Exception during received message parsing: {}".format(repr(e)))
                 if message:
                     self.logger.error("Message that failed being parsed: {}".format(message))
-                e.args = ("Exception during received message parsing. " + str(e),)
-                raise
-        # self.logger.info("event or response: {}".format(event_or_response))
-        return event_or_response
+                # TODO: Send pushover notification here!
+                await asyncio.sleep(1)
 
-    async def subscribe(self):
+    def subscribe(self):
         self.logger.info("Subscribing channels: {}...".format(self.channels))
-        await self.send(self.build_message(
+        self.send(self.build_message(
             method="subscribe",
             params={"channels": self.channels}
         ))
@@ -175,7 +207,8 @@ class CryptoComApiClient(object):
         if data["method"] == "public/heartbeat":
             data["method"] = "public/respond-heartbeat"
             self.logger.info("Heartbeat")
-            await self.send(data)
+            self.send(data)
+            return None
         elif data["method"] == "subscribe":
             res = data.get("result")
             if res:
@@ -183,6 +216,7 @@ class CryptoComApiClient(object):
             else:
                 if data["code"] == 0:
                     self.logger.info("Subscription success!")
+                    return None
                 else:
                     await self.websocket_disconnect()  # For simpler flow
                     self.authenticated = False
@@ -192,12 +226,13 @@ class CryptoComApiClient(object):
                 self.logger.info("Authentication success!")
                 self.authenticated = True
                 if self.channels:
-                    await self.subscribe()
+                    self.subscribe()
+                return None
             else:
                 await self.websocket_disconnect()  # For simpler flow
                 raise Exception(f"Auth error: {json.dumps(data)}")
-        else:
-            return data
+
+        return data
 
     async def websocket_connect(self):
         websocket_uri = self.MARKET_URI if self.client_type == self.MARKET else self.USER_URI
@@ -207,22 +242,26 @@ class CryptoComApiClient(object):
         self.websocket = await websockets.connect(websocket_uri)
         await asyncio.sleep(1)  # As requested by crypto.com API
         if self.client_type == self.USER and self.api_key:
-            await self.authenticate()
+            self.authenticate()
         # Outcommented due to API defect requirering authentication (via public/auth) for public methods
         # elif self.client_type == self.USER and not self.api_key:
         #     self.logger.warning("Using USER API without providing api key (it's acceptable only when calling public methods)!")
         #     if self.channels:
         #         await self.subscribe()
         elif self.channels:
-            await self.subscribe()
+            self.subscribe()
 
     async def websocket_disconnect(self):
         self.logger.info("Closing websocket!")
         await self.websocket.close()
 
-    async def __aenter__(self):
-        await self.websocket_connect()
-        return self
+    def run(self):
+        asyncio.create_task(self.handle_requests())
+        asyncio.create_task(self.handle_events_and_responses())
 
-    async def __aexit__(self, exc_type, exc, tb):
-        await self.websocket_disconnect()
+    # async def __aenter__(self):
+    #     await self.websocket_connect()
+    #     return self
+    #
+    # async def __aexit__(self, exc_type, exc, tb):
+    #     await self.websocket_disconnect()

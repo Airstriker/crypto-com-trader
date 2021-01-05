@@ -2,14 +2,12 @@ import os
 import sys
 import asyncio
 import logging
-import websockets
-import socket
 import multiprocessing.queues
 from event_dispatcher import EventDispatcher
 from crypto_com_client import CryptoComClient
 from crypto_com_lib import CryptoComApiClient
-from queue import Empty, Queue
-from periodic import PeriodicAsync
+from queue import Empty
+from periodic import PeriodicNormal
 from pid import PidFile
 
 
@@ -28,7 +26,6 @@ class CryptoComUserApiWorker(object):
         self.shared_market_data = shared_market_data
         self.shared_user_api_data = shared_user_api_data
         self.buy_sell_requests_queue = buy_sell_requests_queue
-        self.postponed_requests_queue = Queue()
         self.crypto_com_api_client = None
         self.initializing = False
         self.initial_requests_list = []
@@ -49,23 +46,15 @@ class CryptoComUserApiWorker(object):
         logger.addHandler(ch)
         logger.addHandler(fh)
 
-    async def get_instruments(self):
+    def get_instruments(self):
         '''
         Provides information on all supported instruments (e.g. BTC_USDT)
         '''
-        if self.crypto_com_api_client.authenticated:
-            try:
-                await self.crypto_com_api_client.send(
-                    self.crypto_com_api_client.build_message(
-                        method="public/get-instruments"
-                    )
-                )
-            except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
-                pass  # That's not a critical request - no need to retransmit
-            except asyncio.TimeoutError as e:
-                pass  # That's not a critical request - no need to retransmit
-        # else:
-        #     self.logger.warning("Websocket connection not authenticated! Cannot send public/get-instruments request.")
+        self.crypto_com_api_client.send(
+            self.crypto_com_api_client.build_message(
+                method="public/get-instruments"
+            )
+        )
 
     def handle_response_get_instruments(self, response: dict):
         '''
@@ -91,28 +80,17 @@ class CryptoComUserApiWorker(object):
                 if value == 0:
                     raise Exception("The decimals for ticker: {} have not been updated.".format(ticker))
 
-    async def get_user_balances(self):
+    def get_user_balances(self):
         '''
         Returns the account balance of a user for all tokens/coins.
         To be triggered only after websockets disconnection.
         '''
-        if self.crypto_com_api_client.authenticated:
-            request = self.crypto_com_api_client.build_message(
+        self.crypto_com_api_client.send(
+            self.crypto_com_api_client.build_message(
                 method="private/get-account-summary",
                 params={}
             )
-            try:
-                await self.crypto_com_api_client.send(request)
-            except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
-                # Put the request to the retransmission queue and retry when the websocket is again authenticated
-                self.logger.warning("Websocket disconnected - putting request with id {} to postponed requests queue!".format(request["id"]))
-                self.postponed_requests_queue.put(request)
-            except asyncio.TimeoutError as e:
-                # Put the request to the retransmission queue and retry when the websocket is again authenticated
-                self.logger.warning("Timeout on sending request with id {} - putting request to postponed requests queue!".format(request["id"]))
-                self.postponed_requests_queue.put(request)
-        else:
-            self.logger.warning("Websocket connection not authenticated! Cannot send private/get-account-summary request.")
+        )
 
     def handle_response_get_user_balances(self, response: dict):
         '''
@@ -173,7 +151,7 @@ class CryptoComUserApiWorker(object):
         except Exception as e:
             raise Exception("Wrong data structure in user.balance channel event. Exception: {}".format(repr(e)))
 
-    async def handle_buy_request(self, request: dict):
+    def handle_buy_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
         price_in_request = request["price"]
         self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"] = price_in_request
@@ -189,7 +167,7 @@ class CryptoComUserApiWorker(object):
             self.logger.info("[BUY REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com))
             self.transactions_logger.info("[BUY] Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com))
 
-    async def handle_sell_request(self, request: dict):
+    def handle_sell_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
         price_in_request = request["price"]
         self.shared_user_api_data["last_transaction_BTC_sell_price_in_fiat"] = price_in_request
@@ -208,7 +186,7 @@ class CryptoComUserApiWorker(object):
             self.logger.info("[SELL REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt))
             self.transactions_logger.info("[SELL] Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt))
 
-    async def handle_buy_sell_requests(self):
+    def handle_buy_sell_requests(self):
         '''
         The incoming request should be a dict with the following keys:
         {
@@ -224,38 +202,15 @@ class CryptoComUserApiWorker(object):
             if request:
                 if "type" in request and "price" in request and "fiat" in request:
                     if request["type"] == "buy":
-                        await self.handle_buy_request(request)
+                        self.handle_buy_request(request)
                     elif request["type"] == "sell":
-                        await self.handle_sell_request(request)
+                        self.handle_sell_request(request)
                     else:
                         raise Exception("Unknown 'type' key value in buy/sell request! Request: {}".format(request))
                 else:
                     raise Exception("The incoming buy/sell request doesn't contain required keys! Request: {}".format(request))
 
-    async def send_postponed_requests(self):
-        if self.crypto_com_api_client.authenticated:
-            try:
-                request = self.postponed_requests_queue.get_nowait()
-            except Empty:
-                pass
-            else:
-                if request:
-                    try:
-                        await self.crypto_com_api_client.send(request)
-                    except (websockets.ConnectionClosed, websockets.ConnectionClosedOK, websockets.ConnectionClosedError, socket.gaierror, OSError) as e:
-                        # Put the request back for retransmission - shit happens ;]
-                        self.logger.warning("Websocket disconnected - putting request with id {} to postponed requests queue - again!".format(request["id"]))
-                        self.postponed_requests_queue.put(request)
-                    except asyncio.TimeoutError as e:
-                        # Put the request back for retransmission - shit happens ;]
-                        self.logger.warning("Timeout on sending request with id {} - putting request to postponed requests queue!".format(request["id"]))
-                        self.postponed_requests_queue.put(request)
-                    except Exception as e:
-                        self.logger.exception("Exception during sending postponed request with id: {}. Exception: {}".format(request["id"], repr(e)))
-                        e.args = ("Exception during sending postponed request with id: {}. ".format(request["id"]) + str(e),)
-                        raise
-
-    def observer_for_client_authentication_state(self, authenticated):
+    def observe_client_authentication_state(self, authenticated):
         if authenticated:
             self.initializing = True
         else:
@@ -264,10 +219,10 @@ class CryptoComUserApiWorker(object):
                 for method_dict in self.initial_requests_list:
                     method_dict["initialized"] = False
 
-    async def send_initial_requests(self):
+    def send_initial_requests(self):
         for method_dict in self.initial_requests_list:
             if not method_dict["initialized"]:
-                await method_dict["method"]()
+                method_dict["method"]()
 
     async def run(self):
 
@@ -300,7 +255,7 @@ class CryptoComUserApiWorker(object):
                 client_type=CryptoComApiClient.USER,
                 debug=self.debug,
                 logger=self.logger,
-                observer_for_authenticated=self.observer_for_client_authentication_state,
+                observer_for_authenticated=self.observe_client_authentication_state,
                 api_key=self.crypto_com_client.crypto_com_api_key,
                 api_secret=self.crypto_com_client.crypto_com_secret_key,
                 channels=[
@@ -308,23 +263,29 @@ class CryptoComUserApiWorker(object):
                 ]
         )
 
-        periodic_call_get_instruments = PeriodicAsync(5, lambda: self.get_instruments())
+        periodic_call_get_instruments = PeriodicNormal(5, self.get_instruments)
         self.periodic_calls.append(periodic_call_get_instruments)
-        await periodic_call_get_instruments.start()
+        periodic_call_get_instruments.start()
 
-        self.initial_requests_list.append(
+        self.initial_requests_list = [
             {
                 "method": self.get_user_balances,
                 "api_method": "private/get-account-summary",
                 "initialized": False
+            },
+            {
+                "method": self.get_instruments,
+                "api_method": "public/get-instruments",
+                "initialized": False
             }
-        )
+        ]
 
         while True:
+            await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
             # Send initial requests
             if self.initializing:
                 try:
-                    await self.send_initial_requests()
+                    self.send_initial_requests()
                 except Exception as e:
                     message = "Exception during initial requests sending: {}".format(repr(e))
                     self.logger.exception(message)
@@ -339,19 +300,10 @@ class CryptoComUserApiWorker(object):
                     initialized = initialized and method_dict["initialized"]
                 self.initialized = initialized
 
-            # Send postponed requests (eg. due to websocket disconnection)
-            try:
-                await self.send_postponed_requests()
-            except Exception as e:
-                message = "Exception during sending postponed request: {}".format(repr(e))
-                self.logger.exception(message)
-                # TODO: Send pushover notification here with message
-                await asyncio.sleep(1)
-
             # Handle externally injected buy/sell requests
             if self.initialized:
                 try:
-                    await self.handle_buy_sell_requests()
+                    self.handle_buy_sell_requests()
                 except Exception as e:
                     message = "Exception during handling buy/sell request: {}".format(repr(e))
                     self.logger.exception(message)
@@ -361,10 +313,9 @@ class CryptoComUserApiWorker(object):
             # Main response / channel event handling loop
             event_or_response = None
             try:
-                event_or_response = await self.crypto_com_api_client.next_event_or_response()
+                event_or_response = self.crypto_com_api_client.get_event_or_response_no_wait()
                 event_dispatcher.dispatch(event_or_response)
             except Exception as e:
-                message = None
                 if event_or_response:
                     # Check if that's been a response for one of the initial requests
                     if "method" in event_or_response:
@@ -377,16 +328,13 @@ class CryptoComUserApiWorker(object):
                         message = "Exception during handling user api event: {}".format(repr(e))
                     self.logger.exception(message)
                     self.logger.error("Event or response that failed: {}".format(event_or_response))
-                else:
-                    message = "Exception during parsing user api event or response: {}".format(repr(e))
-                    self.logger.exception(message)
                 # TODO: Send pushover notification here with message
                 await asyncio.sleep(1)
 
     async def cleanup(self):
         self.logger.info("Cleanup before closing worker...")
         for periodic_call in self.periodic_calls:
-            await periodic_call.stop()
+            periodic_call.stop()
 
     def run_forever(self):
         # executor = ProcessPoolExecutor(2)  # Alternatively ThreadPoolExecutor
