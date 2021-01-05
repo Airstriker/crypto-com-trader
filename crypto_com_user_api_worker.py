@@ -263,9 +263,9 @@ class CryptoComUserApiWorker(object):
                 ]
         )
 
-        periodic_call_get_instruments = PeriodicNormal(5, self.get_instruments)
-        self.periodic_calls.append(periodic_call_get_instruments)
-        periodic_call_get_instruments.start()
+        # periodic_call_get_instruments = PeriodicNormal(5, self.get_instruments)
+        # self.periodic_calls.append(periodic_call_get_instruments)
+        # periodic_call_get_instruments.start()
 
         self.initial_requests_list = [
             {
