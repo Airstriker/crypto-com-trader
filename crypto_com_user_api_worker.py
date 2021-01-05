@@ -118,11 +118,6 @@ class CryptoComUserApiWorker(object):
                     self.shared_user_api_data["balance_CRO"] = balance["available"]
         except Exception as e:
             raise Exception("Wrong data structure in private/get-account-summary response: {}. Exception: {}".format(response, repr(e)))
-        else:
-            # Mark the method as initialized in self.initial_requests_list
-            for method_dict in self.initial_requests_list:
-                if method_dict["method"] == self.get_user_balances:
-                    method_dict["initialized"] = True
 
     def handle_channel_event_user_balance(self, event: dict):
         '''
@@ -210,20 +205,6 @@ class CryptoComUserApiWorker(object):
                 else:
                     raise Exception("The incoming buy/sell request doesn't contain required keys! Request: {}".format(request))
 
-    def observe_client_authentication_state(self, authenticated):
-        if authenticated:
-            self.initializing = True
-        else:
-            self.initialized = False
-            if self.initial_requests_list:
-                for method_dict in self.initial_requests_list:
-                    method_dict["initialized"] = False
-
-    def send_initial_requests(self):
-        for method_dict in self.initial_requests_list:
-            if not method_dict["initialized"]:
-                method_dict["method"]()
-
     async def run(self):
 
         '''
@@ -246,62 +227,35 @@ class CryptoComUserApiWorker(object):
         }
         '''
 
-        event_dispatcher = EventDispatcher()
-        event_dispatcher.register_channel_handling_method("user.balance", self.handle_channel_event_user_balance)
-        event_dispatcher.register_response_handling_method("public/get-instruments", self.handle_response_get_instruments)
-        event_dispatcher.register_response_handling_method("private/get-account-summary", self.handle_response_get_user_balances)
-
         self.crypto_com_api_client = CryptoComApiClient(
-                client_type=CryptoComApiClient.USER,
-                debug=self.debug,
-                logger=self.logger,
-                observer_for_authenticated=self.observe_client_authentication_state,
-                api_key=self.crypto_com_client.crypto_com_api_key,
-                api_secret=self.crypto_com_client.crypto_com_secret_key,
-                channels=[
-                    "user.balance"
-                ]
-        )
-
-        # periodic_call_get_instruments = PeriodicNormal(5, self.get_instruments)
-        # self.periodic_calls.append(periodic_call_get_instruments)
-        # periodic_call_get_instruments.start()
-
-        self.initial_requests_list = [
-            {
-                "method": self.get_user_balances,
-                "api_method": "private/get-account-summary",
-                "initialized": False
+            client_type=CryptoComApiClient.USER,
+            debug=self.debug,
+            logger=self.logger,
+            api_key=self.crypto_com_client.crypto_com_api_key,
+            api_secret=self.crypto_com_client.crypto_com_secret_key,
+            channels=[
+                "user.balance"
+            ],
+            channels_handling_map={
+                "user.balance": self.handle_channel_event_user_balance
             },
-            {
-                "method": self.get_instruments,
-                "api_method": "public/get-instruments",
-                "initialized": False
-            }
-        ]
+            responses_handling_map={
+                "public/get-instruments": self.handle_response_get_instruments,
+                "private/get-account-summary": self.handle_response_get_user_balances
+            },
+            initial_requests_handling_map={
+                "private/get-account-summary": self.get_user_balances,
+                "public/get-instruments": self.get_instruments
+            },
+            # periodic_requests_handling_map={
+            #     "public/get-instruments": self.get_instruments
+            # }
+        )
 
         while True:
             await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
-            # Send initial requests
-            if self.initializing:
-                try:
-                    self.send_initial_requests()
-                except Exception as e:
-                    message = "Exception during initial requests sending: {}".format(repr(e))
-                    self.logger.exception(message)
-                    # TODO: Send pushover notification here with message
-                    await asyncio.sleep(1)
-                else:
-                    self.initializing = False
-            elif not self.initialized:
-                # Check if all initial methods are already initialized (the responses already handled)
-                initialized = True
-                for method_dict in self.initial_requests_list:
-                    initialized = initialized and method_dict["initialized"]
-                self.initialized = initialized
-
             # Handle externally injected buy/sell requests
-            if self.initialized:
+            if self.crypto_com_api_client.initialized:
                 try:
                     self.handle_buy_sell_requests()
                 except Exception as e:
@@ -310,31 +264,8 @@ class CryptoComUserApiWorker(object):
                     # TODO: Send pushover notification here with message
                     await asyncio.sleep(1)
 
-            # Main response / channel event handling loop
-            event_or_response = None
-            try:
-                event_or_response = self.crypto_com_api_client.get_event_or_response_no_wait()
-                event_dispatcher.dispatch(event_or_response)
-            except Exception as e:
-                if event_or_response:
-                    # Check if that's been a response for one of the initial requests
-                    if "method" in event_or_response:
-                        for method_dict in self.initial_requests_list:
-                            if method_dict["api_method"] == event_or_response["method"]:
-                                self.initializing = True
-                                break
-                        message = "Exception during handling user api response: {}".format(repr(e))
-                    else:
-                        message = "Exception during handling user api event: {}".format(repr(e))
-                    self.logger.exception(message)
-                    self.logger.error("Event or response that failed: {}".format(event_or_response))
-                # TODO: Send pushover notification here with message
-                await asyncio.sleep(1)
-
     async def cleanup(self):
         self.logger.info("Cleanup before closing worker...")
-        for periodic_call in self.periodic_calls:
-            periodic_call.stop()
 
     def run_forever(self):
         # executor = ProcessPoolExecutor(2)  # Alternatively ThreadPoolExecutor

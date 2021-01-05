@@ -12,6 +12,7 @@ import logging
 import socket
 from typing import List, Callable
 from queue import Empty, Queue
+from periodic import PeriodicNormal
 
 
 class CryptoComApiClient(object):
@@ -24,16 +25,24 @@ class CryptoComApiClient(object):
     USER_URI = "wss://stream.crypto.com/v2/user"
     SANDBOX_USER_URI = "wss://uat-stream.3ona.co/v2/user"
 
-    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, api_secret: str = None, api_key: str = None, observer_for_authenticated: Callable = None):
+    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, channels_handling_map: dict = None, responses_handling_map: dict = None, initial_requests_handling_map: dict = None, periodic_requests_handling_map: dict = None, api_secret: str = None, api_key: str = None, observer_for_authenticated: Callable = None):
         self.api_secret = api_secret.encode() if api_key else None
         self.api_key = api_key
         self._next_id = 1
         self.channels = channels
+        self.channels_handling_map = channels_handling_map
+        self.responses_handling_map = responses_handling_map
+        self.initial_requests_handling_map = initial_requests_handling_map
+        self.periodic_requests_handling_map = periodic_requests_handling_map
+        self.periodic_calls = []
+        self.initial_requests_list = []
+        self.initializing = False
+        self.initialized = False
+        self.requests_queue = Queue()
+        self.events_and_responses_queue = Queue()
         self.websocket = None
         self.client_type = client_type
         self.debug = debug
-        self.requests_queue = Queue()
-        self.events_and_responses_queue = Queue()
         self._authenticated = False
         self._authenticated_observers = []  # Supporting only normal (not async (coroutines)) callbacks
         if observer_for_authenticated:
@@ -42,19 +51,34 @@ class CryptoComApiClient(object):
             self.logger = logger
         else:
             self.logger = logging.getLogger("crypto_com_lib")
-            self.logger.setLevel(logging.DEBUG)
-            fh = logging.FileHandler("./logs/crypto_com_lib.log", mode="w")
-            fh.setLevel(logging.DEBUG)
-            ch = logging.StreamHandler()
-            ch.setLevel(logging.DEBUG)
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            ch.setFormatter(formatter)
-            fh.setFormatter(formatter)
-            self.logger.addHandler(ch)
-            self.logger.addHandler(fh)
+            CryptoComApiClient.setup_logger(self.logger, "./logs/crypto_com_lib.log")
+
+        # Self validation
+        self.check_channels_handling_map_consistency()
+        self.check_responses_handling_map_consistency()
 
         # Start itself !
         self.run()
+        self.start_periodic_requests()
+
+    def __exit__(self):
+        self.logger.info("Cleanup...")
+        for periodic_call in self.periodic_calls:
+            periodic_call.stop()
+
+    @staticmethod
+    def setup_logger(logger, log_file):
+        logger.setLevel(logging.DEBUG)
+        fh = logging.FileHandler(log_file, mode="w")
+        fh.setLevel(logging.DEBUG)
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.DEBUG)
+        console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        ch.setFormatter(console_formatter)
+        fh.setFormatter(file_formatter)
+        logger.addHandler(ch)
+        logger.addHandler(fh)
 
     @property
     def authenticated(self):
@@ -63,6 +87,14 @@ class CryptoComApiClient(object):
     @authenticated.setter
     def authenticated(self, value):
         self._authenticated = value
+        if self._authenticated:
+            self.initializing = True
+        else:
+            self.initialized = False
+            if self.initial_requests_list:
+                for method_dict in self.initial_requests_list:
+                    method_dict["initialized"] = False
+
         # Notify the observers of the value change
         for callback in self._authenticated_observers:
             # Supporting only normal (not async (coroutines)) callbacks
@@ -71,6 +103,44 @@ class CryptoComApiClient(object):
     def register_observer_for_authenticated(self, callback):
         self._authenticated_observers.append(callback)
 
+    def authenticate(self):
+        self.logger.info("Authenticating using the API key: {}...".format(self.api_key))
+        self.send(self.build_message(
+            method="public/auth"
+        ))
+
+    def check_channels_handling_map_consistency(self):
+        for channel in self.channels:
+            if not self.channels_handling_map.get(channel, None):
+                raise Exception("channels_handling_map dict is missing the handling method definition for channel: {}".format(channel))
+
+    def check_responses_handling_map_consistency(self):
+        if self.initial_requests_handling_map:
+            for api_method, method in self.initial_requests_handling_map.items():
+                self.initial_requests_list.append({
+                    "method": method,
+                    "api_method": api_method,
+                    "initialized": False
+                })
+                if not self.responses_handling_map.get(api_method, None):
+                    raise Exception("responses_handling_map dict is missing the handling method definition for method: {}".format(api_method))
+
+        if self.periodic_requests_handling_map:
+            for api_method, method in self.periodic_requests_handling_map.items():
+                if not self.responses_handling_map.get(api_method, None):
+                    raise Exception("responses_handling_map dict is missing the handling method definition for method: {}".format(api_method))
+
+    def start_periodic_requests(self):
+        if self.periodic_requests_handling_map:
+            for method in self.periodic_requests_handling_map.values():
+                try:
+                    periodic_call = PeriodicNormal(5, method)
+                    self.periodic_calls.append(periodic_call)
+                    periodic_call.start()
+                except Exception as e:
+                    e.args = ("Exception during periodic function execution: {}. ".format(method) + str(e),)
+                    raise
+
     def get_nonce(self):
         return int(time.time() * 1000)
 
@@ -78,12 +148,6 @@ class CryptoComApiClient(object):
         i = self._next_id
         self._next_id += 1
         return i
-
-    def authenticate(self):
-        self.logger.info("Authenticating using the API key: {}...".format(self.api_key))
-        self.send(self.build_message(
-            method="public/auth"
-        ))
 
     def send(self, request: dict):
         self.requests_queue.put(request)
@@ -124,7 +188,67 @@ class CryptoComApiClient(object):
 
         return message
 
+    async def dispatch(self):
+        while True:
+            await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
+            event_or_response = await self.get_event_or_response()
+            try:
+                if "subscription" in event_or_response:
+                    self.channels_handling_map[event_or_response["subscription"]](event_or_response)
+                else:
+                    self.responses_handling_map[event_or_response["method"]](event_or_response)
+            except Exception as e:
+                if "subscription" in event_or_response:
+                    message = "Exception during event handling: {}".format(repr(e))
+                    self.logger.exception(message)
+                    self.logger.error("Event that failed: {}".format(event_or_response))
+                else:
+                    # Check if that's been a response for one of the initial requests
+                    for method_dict in self.initial_requests_list:
+                        if method_dict["api_method"] == event_or_response["method"]:
+                            self.initializing = True
+                            break
+                    message = "Exception during response handling: {}".format(repr(e))
+                    self.logger.exception(message)
+                    self.logger.error("Response that failed: {}".format(event_or_response))
+                # TODO: Send pushover notification here with message
+            else:
+                if "method" in event_or_response:
+                    # Mark the method as initialized in self.initial_requests_list
+                    for method_dict in self.initial_requests_list:
+                        if method_dict["api_method"] == event_or_response["method"]:
+                            method_dict["initialized"] = True
+
+    async def send_initial_requests(self):
+        '''
+        Initial requests are sent on every websocket disconnection event.
+        '''
+        while True:
+            await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
+            # Send initial requests
+            if self.initializing:
+                try:
+                    for method_dict in self.initial_requests_list:
+                        if not method_dict["initialized"]:
+                            method_dict["method"]()
+                except Exception as e:
+                    message = "Exception during initial requests sending: {}".format(repr(e))
+                    self.logger.exception(message)
+                    # TODO: Send pushover notification here with message
+                    await asyncio.sleep(1)
+                else:
+                    self.initializing = False
+            elif not self.initialized:
+                # Check if all initial methods are already initialized (the responses already handled)
+                _initialized = True
+                for method_dict in self.initial_requests_list:
+                    _initialized = _initialized and method_dict["initialized"]
+                self.initialized = _initialized
+
     async def handle_requests(self):
+        '''
+        Main loop handling all queued requests
+        '''
         while True:
             await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
             if self.websocket and self.websocket.open:
@@ -171,6 +295,9 @@ class CryptoComApiClient(object):
             return event_or_response
 
     async def handle_events_and_responses(self):
+        '''
+        Main loop handling all queued events or responses
+        '''
         while True:
             await asyncio.sleep(0)
             message = None
@@ -256,8 +383,16 @@ class CryptoComApiClient(object):
         await self.websocket.close()
 
     def run(self):
-        asyncio.create_task(self.handle_requests())
-        asyncio.create_task(self.handle_events_and_responses())
+        try:
+            asyncio.get_running_loop()
+        except Exception as e:
+            self.logger.exception("No running asyncio loop detected! Terminating CryptoComApiClient!")
+            raise Exception("No running asyncio loop detected! Terminating CryptoComApiClient!")
+        else:
+            asyncio.create_task(self.handle_requests())
+            asyncio.create_task(self.handle_events_and_responses())
+            asyncio.create_task(self.send_initial_requests())
+            asyncio.create_task(self.dispatch())
 
     # async def __aenter__(self):
     #     await self.websocket_connect()

@@ -2,7 +2,6 @@ import os
 import sys
 import asyncio
 import logging
-from event_dispatcher import EventDispatcher
 from crypto_com_lib import CryptoComApiClient
 from pid import PidFile
 
@@ -68,11 +67,6 @@ class CryptoComMarketDataWorker(object):
             raise Exception("Wrong data structure in ticker.CRO_BTC channel event. Exception: {}".format(repr(e)))
 
     async def run(self):
-        event_dispatcher = EventDispatcher()
-        event_dispatcher.register_channel_handling_method("ticker.BTC_USDT", self.handle_channel_event_ticker_BTC_USDT)
-        event_dispatcher.register_channel_handling_method("ticker.CRO_USDT", self.handle_channel_event_ticker_CRO_USDT)
-        event_dispatcher.register_channel_handling_method("ticker.CRO_BTC", self.handle_channel_event_ticker_CRO_BTC)
-
         self.crypto_com_api_client = CryptoComApiClient(
             client_type=CryptoComApiClient.MARKET,
             debug=self.debug,
@@ -81,20 +75,17 @@ class CryptoComMarketDataWorker(object):
                 "ticker.BTC_USDT",
                 "ticker.CRO_USDT",
                 "ticker.CRO_BTC",
-            ]
+            ],
+            channels_handling_map={
+                "ticker.BTC_USDT": self.handle_channel_event_ticker_BTC_USDT,
+                "ticker.CRO_USDT": self.handle_channel_event_ticker_CRO_USDT,
+                "ticker.CRO_BTC": self.handle_channel_event_ticker_CRO_BTC
+            }
         )
         while True:
             # Main response / channel event handling loop
             await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
-            event_or_response = None
-            try:
-                event_or_response = await self.crypto_com_api_client.get_event_or_response()
-                event_dispatcher.dispatch(event_or_response)
-            except Exception as e:
-                message = "Exception during handling market data event or response: {}".format(repr(e))
-                self.logger.exception(message)
-                self.logger.error("Event or response that failed: {}".format(event_or_response))
-                # TODO: Send pushover notification here with message
+            pass
 
     async def cleanup(self):
         self.logger.info("Cleanup before closing worker...")
