@@ -17,6 +17,8 @@ sudo apt-get install libssl-dev openssl -y || exit 1
 sudo apt-get install libssl-dev -y || exit 1
 sudo apt-get install libbz2-dev -y || exit 1
 sudo apt-get install zlib1g-dev -y || exit 1
+sudo apt-get install libffi-dev -y || exit 1
+sudo apt-get install libapache2-mod-wsgi-py3 -y || exit 1
 sudo python3 -m pip uninstall pip -y
 sudo apt-get install python3-pip --reinstall -y || exit 1
 sudo apt-get install python-dev -y || exit 1
@@ -45,4 +47,7 @@ source ../venv/bin/activate || exit 1
 ../venv/bin/pip install -r requirements.txt || exit 1
 
 python --version
+
+sudo systemctl disable apache2 && sudo systemctl stop apache2
+
 echo "Finished installation!"
