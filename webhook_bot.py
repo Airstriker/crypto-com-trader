@@ -42,7 +42,14 @@ class WebhookBot(object):
 
     def start_bot(self):
         WebhookView.register(self.app)
-        self.app.run()
+        try:
+            self.app.run(host='0.0.0.0', port=80)
+        except PermissionError:
+            print("Exception! You need root access to run the bot at port 80! Running at default port 5000 instead!")
+            self.app.run(host='0.0.0.0', port=5000)
+        except Exception as e:
+            e.args = ("Exception during WebhookBot running! " + str(e),)
+            raise
 
 
 class WebhookView(FlaskView):

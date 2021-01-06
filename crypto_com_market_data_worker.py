@@ -4,11 +4,12 @@ import asyncio
 import logging
 from crypto_com_lib import CryptoComApiClient
 from pid import PidFile
+from pushover_notifier import PushoverNotifier
 
 
 class CryptoComMarketDataWorker(object):
 
-    def __init__(self, shared_market_data: dict, debug: bool = True, log_file: str = None):
+    def __init__(self, shared_market_data: dict, debug: bool = True, log_file: str = None, pushover_notifier: PushoverNotifier = None):
         print("Initializing crypto.com market data worker...")
         self.debug = debug
         self.log_file = log_file if log_file else "./logs/crypto_com_market_data_worker.log"
@@ -16,6 +17,7 @@ class CryptoComMarketDataWorker(object):
         CryptoComMarketDataWorker.setup_logger(self.logger, self.log_file)
         self.shared_market_data = shared_market_data
         self.crypto_com_api_client = None
+        self.pushover_notifier = pushover_notifier
 
     @staticmethod
     def setup_logger(logger, log_file):
@@ -71,6 +73,7 @@ class CryptoComMarketDataWorker(object):
             client_type=CryptoComApiClient.MARKET,
             debug=self.debug,
             logger=self.logger,
+            pushover_notifier=self.pushover_notifier,
             channels=[
                 "ticker.BTC_USDT",
                 "ticker.CRO_USDT",
@@ -82,6 +85,8 @@ class CryptoComMarketDataWorker(object):
                 "ticker.CRO_BTC": self.handle_channel_event_ticker_CRO_BTC
             }
         )
+        if self.pushover_notifier:
+            self.pushover_notifier.notify("Started crypto_com_market_data_worker.")
         while True:
             # Main response / channel event handling loop
             await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
@@ -100,15 +105,21 @@ class CryptoComMarketDataWorker(object):
                 self.logger.info("Interrupted")
                 asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
+                if self.pushover_notifier:
+                    self.pushover_notifier.notify("Interrupted. Bye bye!")
                 self.logger.info("Bye bye!")
                 try:
                     sys.exit(0)
                 except SystemExit:
                     os._exit(0)
             except Exception as e:
-                self.logger.exception(e)
+                if self.pushover_notifier:
+                    self.pushover_notifier.notify(repr(e))
+                self.logger.exception(repr(e))
             finally:
                 asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
+                if self.pushover_notifier:
+                    self.pushover_notifier.notify("Bye bye!")
                 self.logger.info("Bye bye!")
 

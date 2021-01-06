@@ -13,7 +13,7 @@ import socket
 from typing import List, Callable
 from queue import Empty, Queue
 from periodic import PeriodicNormal
-
+from pushover_notifier import PushoverNotifier
 
 class CryptoComApiClient(object):
 
@@ -25,7 +25,7 @@ class CryptoComApiClient(object):
     USER_URI = "wss://stream.crypto.com/v2/user"
     SANDBOX_USER_URI = "wss://uat-stream.3ona.co/v2/user"
 
-    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, channels_handling_map: dict = None, responses_handling_map: dict = None, initial_requests_handling_map: dict = None, periodic_requests_handling_map: dict = None, api_secret: str = None, api_key: str = None, observer_for_authenticated: Callable = None):
+    def __init__(self, client_type: int, debug: bool = True, logger: logging.Logger = None, channels: List[str] = None, channels_handling_map: dict = None, responses_handling_map: dict = None, initial_requests_handling_map: dict = None, periodic_requests_handling_map: dict = None, api_secret: str = None, api_key: str = None, observer_for_authenticated: Callable = None, pushover_notifier: PushoverNotifier = None):
         self.api_secret = api_secret.encode() if api_key else None
         self.api_key = api_key
         self._next_id = 1
@@ -52,6 +52,7 @@ class CryptoComApiClient(object):
         else:
             self.logger = logging.getLogger("crypto_com_lib")
             CryptoComApiClient.setup_logger(self.logger, "./logs/crypto_com_lib.log")
+        self.pushover_notifier = pushover_notifier
 
         # Self validation
         self.check_channels_handling_map_consistency()
@@ -211,7 +212,8 @@ class CryptoComApiClient(object):
                     message = "Exception during response handling: {}".format(repr(e))
                     self.logger.exception(message)
                     self.logger.error("Response that failed: {}".format(event_or_response))
-                # TODO: Send pushover notification here with message
+                if self.pushover_notifier:
+                    self.pushover_notifier.notify(message)
             else:
                 if "method" in event_or_response:
                     # Mark the method as initialized in self.initial_requests_list
@@ -234,7 +236,8 @@ class CryptoComApiClient(object):
                 except Exception as e:
                     message = "Exception during initial requests sending: {}".format(repr(e))
                     self.logger.exception(message)
-                    # TODO: Send pushover notification here with message
+                    if self.pushover_notifier:
+                        self.pushover_notifier.notify(message)
                     await asyncio.sleep(1)
                 else:
                     self.initializing = False
@@ -254,7 +257,7 @@ class CryptoComApiClient(object):
             if self.websocket and self.websocket.open:
                 try:
                     request = self.requests_queue.get_nowait()
-                except Empty:
+                except (Empty, BrokenPipeError):
                     pass
                 else:
                     # Check if request requires authentication
@@ -271,9 +274,11 @@ class CryptoComApiClient(object):
                         self.requests_queue.put(request)
                         await asyncio.sleep(1)
                     except Exception as e:
-                        self.logger.exception("Exception during sending request with id: {}. Putting it back to queue. Exception: {}".format(request["id"], repr(e)))
+                        message = "Exception during sending request with id: {}. Putting it back to queue. Exception: {}".format(request["id"], repr(e))
+                        self.logger.exception(message)
                         self.requests_queue.put(request)
-                        # TODO: Send pushover notification here!
+                        if self.pushover_notifier:
+                            self.pushover_notifier.notify(message)
                         await asyncio.sleep(1)
 
     async def get_event_or_response(self):
@@ -281,7 +286,7 @@ class CryptoComApiClient(object):
             await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
             try:
                 event_or_response = self.events_and_responses_queue.get_nowait()
-            except Empty:
+            except (Empty, BrokenPipeError):
                 continue
             else:
                 return event_or_response
@@ -289,7 +294,7 @@ class CryptoComApiClient(object):
     def get_event_or_response_no_wait(self):
         try:
             event_or_response = self.events_and_responses_queue.get_nowait()
-        except Empty:
+        except (Empty, BrokenPipeError):
             return None
         else:
             return event_or_response
@@ -305,8 +310,10 @@ class CryptoComApiClient(object):
                 if not self.websocket or not self.websocket.open:
                     self.authenticated = False
                     if self.websocket and not self.websocket.open:
-                        self.logger.error("Websocket NOT connected. Trying to reconnect...")
-                        # TODO: Send pushover notification here!
+                        msg = "Websocket NOT connected. Trying to reconnect..."
+                        self.logger.error(msg)
+                        if self.pushover_notifier:
+                            self.pushover_notifier.notify(msg)
                     await self.websocket_connect()
                 message = await self.websocket.recv()
                 event_or_response = await self.parse_message(json.loads(message))
@@ -317,10 +324,12 @@ class CryptoComApiClient(object):
                 self.logger.error(repr(e))
                 await asyncio.sleep(1)
             except Exception as e:
-                self.logger.exception("Exception during received message parsing: {}".format(repr(e)))
+                msg = "Exception during received message parsing: {}".format(repr(e))
+                self.logger.exception(msg)
                 if message:
                     self.logger.error("Message that failed being parsed: {}".format(message))
-                # TODO: Send pushover notification here!
+                if self.pushover_notifier:
+                    self.pushover_notifier.notify(msg)
                 await asyncio.sleep(1)
 
     def subscribe(self):

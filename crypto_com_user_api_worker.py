@@ -9,11 +9,12 @@ from crypto_com_lib import CryptoComApiClient
 from queue import Empty
 from periodic import PeriodicNormal
 from pid import PidFile
+from pushover_notifier import PushoverNotifier
 
 
 class CryptoComUserApiWorker(object):
 
-    def __init__(self, crypto_com_client: CryptoComClient, shared_user_api_data: dict, shared_market_data: dict, buy_sell_requests_queue: multiprocessing.queues.Queue, debug: bool = True, log_file: str = None, transactions_log_file: str = None):
+    def __init__(self, crypto_com_client: CryptoComClient, shared_user_api_data: dict, shared_market_data: dict, buy_sell_requests_queue: multiprocessing.queues.Queue, debug: bool = True, log_file: str = None, transactions_log_file: str = None, pushover_notifier: PushoverNotifier = None):
         print("Initializing crypto.com user api worker for user: {}".format(crypto_com_client.crypto_com_user))
         self.debug = debug
         self.log_file = log_file if log_file else "./logs/crypto_com_user_api_worker_{}.log".format(crypto_com_client.crypto_com_user)
@@ -31,6 +32,7 @@ class CryptoComUserApiWorker(object):
         self.initial_requests_list = []
         self.initialized = False
         self.periodic_calls = []
+        self.pushover_notifier = pushover_notifier
 
     @staticmethod
     def setup_logger(logger, log_file):
@@ -157,10 +159,16 @@ class CryptoComUserApiWorker(object):
         if fiat == "EUR" and eur_usd_exchange_rate != 0:
             price_in_request_in_usd = float(price_in_request) * float(eur_usd_exchange_rate)
             self.logger.info("[BUY REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com))
-            self.transactions_logger.info("[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com))
+            message = "[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com)
+            self.transactions_logger.info(message)
+            if self.pushover_notifier:
+                self.pushover_notifier.notify(message)
         else:
             self.logger.info("[BUY REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com))
-            self.transactions_logger.info("[BUY] Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com))
+            message = "[BUY] Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com)
+            self.transactions_logger.info(message)
+            if self.pushover_notifier:
+                self.pushover_notifier.notify(message)
 
     def handle_sell_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
@@ -176,10 +184,16 @@ class CryptoComUserApiWorker(object):
             price_in_request_in_usd = float(price_in_request) * float(eur_usd_exchange_rate)
             profit_in_fiat_in_usd = float(profit_in_fiat) * float(eur_usd_exchange_rate)
             self.logger.info("[SELL REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
-            self.transactions_logger.info("[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
+            message = "[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt)
+            self.transactions_logger.info(message)
+            if self.pushover_notifier:
+                self.pushover_notifier.notify(message)
         else:
             self.logger.info("[SELL REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt))
-            self.transactions_logger.info("[SELL] Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt))
+            message = "[SELL] Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt)
+            self.transactions_logger.info(message)
+            if self.pushover_notifier:
+                self.pushover_notifier.notify(message)
 
     def handle_buy_sell_requests(self):
         '''
@@ -191,7 +205,7 @@ class CryptoComUserApiWorker(object):
         '''
         try:
             request = self.buy_sell_requests_queue.get_nowait()
-        except Empty:
+        except (Empty, BrokenPipeError):
             pass
         else:
             if request:
@@ -231,6 +245,7 @@ class CryptoComUserApiWorker(object):
             client_type=CryptoComApiClient.USER,
             debug=self.debug,
             logger=self.logger,
+            pushover_notifier=self.pushover_notifier,
             api_key=self.crypto_com_client.crypto_com_api_key,
             api_secret=self.crypto_com_client.crypto_com_secret_key,
             channels=[
@@ -251,6 +266,8 @@ class CryptoComUserApiWorker(object):
             #     "public/get-instruments": self.get_instruments
             # }
         )
+        if self.pushover_notifier:
+            self.pushover_notifier.notify("Started crypto_com_user_api_worker.")
 
         while True:
             await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
@@ -261,7 +278,8 @@ class CryptoComUserApiWorker(object):
                 except Exception as e:
                     message = "Exception during handling buy/sell request: {}".format(repr(e))
                     self.logger.exception(message)
-                    # TODO: Send pushover notification here with message
+                    if self.pushover_notifier:
+                        self.pushover_notifier.notify(message)
                     await asyncio.sleep(1)
 
     async def cleanup(self):
@@ -280,15 +298,21 @@ class CryptoComUserApiWorker(object):
                 self.logger.info("Interrupted")
                 asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
+                if self.pushover_notifier:
+                    self.pushover_notifier.notify("Interrupted. Bye bye!")
                 self.logger.info("Bye bye!")
                 try:
                     sys.exit(0)
                 except SystemExit:
                     os._exit(0)
             except Exception as e:
-                self.logger.exception(e)
+                if self.pushover_notifier:
+                    self.pushover_notifier.notify(repr(e))
+                self.logger.exception(repr(e))
             finally:
                 asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
+                if self.pushover_notifier:
+                    self.pushover_notifier.notify("Bye bye!")
                 self.logger.info("Bye bye!")
 
