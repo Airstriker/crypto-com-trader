@@ -341,9 +341,12 @@ class CryptoComApiClient(object):
 
     async def parse_message(self, data: dict):
         if data["method"] == "public/heartbeat":
-            data["method"] = "public/respond-heartbeat"
+            heartbeat_response = {
+                "id": data["id"],
+                "method": "public/respond-heartbeat"
+            }
             self.logger.info("Heartbeat")
-            self.send(data)
+            self.send(heartbeat_response)
             return None
         elif data["method"] == "subscribe":
             res = data.get("result")
