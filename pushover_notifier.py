@@ -45,4 +45,4 @@ class PushoverNotifier(object):
             for pushover_client in self.pushover_clients:
                 pushover_client.send_message(msg, title=self.application_title, priority=priority, retry=1800, expire=3600)
         except Exception as e:
-            self.logger.exception("PUSHOVER NOTIFICATIONS NOT WORKING - probably connection issues: {}".format(str(e)))
+            self.logger.error("PUSHOVER NOTIFICATIONS NOT WORKING - probably connection issues. {}".format(str(e)))

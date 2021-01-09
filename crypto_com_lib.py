@@ -15,6 +15,7 @@ from queue import Empty, Queue
 from periodic import PeriodicNormal
 from pushover_notifier import PushoverNotifier
 
+
 class CryptoComApiClient(object):
 
     MARKET = 0
@@ -102,8 +103,11 @@ class CryptoComApiClient(object):
             callback(self._authenticated)
 
     def pushover_notify(self, message, priority=2):
-        message = self.logger.name + ": " + message
-        self.pushover_notifier.notify(message, priority)
+        try:
+            message = self.logger.name + ": " + message
+            self.pushover_notifier.notify(message, priority)
+        except Exception as e:
+            self.logger.error("Cannot send pushover notification. Probably connection loss.")
 
     def register_observer_for_authenticated(self, callback):
         self._authenticated_observers.append(callback)
@@ -382,7 +386,14 @@ class CryptoComApiClient(object):
         # if self.debug:
         #     websocket_uri = self.SANDBOX_MARKET_URI if self.client_type == self.MARKET else self.SANDBOX_USER_URI
         self.logger.info("Connecting to websocket: {}...".format(websocket_uri))
-        self.websocket = await websockets.connect(websocket_uri)
+        try:
+            self.websocket = await asyncio.wait_for(websockets.connect(websocket_uri), 10)
+        except Exception as e:
+            self.logger.exception("Websocket connection exception: {}".format(repr(e)))
+            self.pushover_notify("Websocket connection exception: {}".format(repr(e)))
+            if self.websocket:
+                await self.websocket.close()
+            return
         self.pushover_notify("Connected to websocket!", 1)
         await asyncio.sleep(1)  # As requested by crypto.com API
         if self.client_type == self.USER and self.api_key:
