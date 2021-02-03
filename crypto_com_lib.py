@@ -39,6 +39,8 @@ class CryptoComApiClient(object):
         self.initial_requests_list = []
         self.initializing = False
         self.initialized = False
+        self.prevent_pushover_notifications_regarding_disconnected_websocket = False
+        self.last_websocket_connection_exception_pushover_message = None
         self.requests_queue = Queue()
         self.events_and_responses_queue = Queue()
         self.websocket = None
@@ -103,11 +105,12 @@ class CryptoComApiClient(object):
             callback(self._authenticated)
 
     def pushover_notify(self, message, priority=2):
-        try:
-            message = self.logger.name + ": " + message
-            self.pushover_notifier.notify(message, priority)
-        except Exception as e:
-            self.logger.error("Cannot send pushover notification. Probably connection loss.")
+        if self.pushover_notifier:
+            try:
+                message = self.logger.name + ": " + message
+                self.pushover_notifier.notify(message, priority)
+            except Exception as e:
+                self.logger.error("Cannot send pushover notification. Probably connection loss.")
 
     def register_observer_for_authenticated(self, callback):
         self._authenticated_observers.append(callback)
@@ -220,8 +223,7 @@ class CryptoComApiClient(object):
                     message = "Exception during response handling: {}".format(repr(e))
                     self.logger.exception(message)
                     self.logger.error("Response that failed: {}".format(event_or_response))
-                if self.pushover_notifier:
-                    self.pushover_notify(message)
+                self.pushover_notify(message)
             else:
                 if "method" in event_or_response:
                     # Mark the method as initialized in self.initial_requests_list
@@ -244,8 +246,7 @@ class CryptoComApiClient(object):
                 except Exception as e:
                     message = "Exception during initial requests sending: {}".format(repr(e))
                     self.logger.exception(message)
-                    if self.pushover_notifier:
-                        self.pushover_notify(message)
+                    self.pushover_notify(message)
                     await asyncio.sleep(1)
                 else:
                     self.initializing = False
@@ -285,8 +286,7 @@ class CryptoComApiClient(object):
                         message = "Exception during sending request with id: {}. Putting it back to queue. Exception: {}".format(request["id"], repr(e))
                         self.logger.exception(message)
                         self.requests_queue.put(request)
-                        if self.pushover_notifier:
-                            self.pushover_notify(message)
+                        self.pushover_notify(message)
                         await asyncio.sleep(1)
 
     async def get_event_or_response(self):
@@ -320,8 +320,9 @@ class CryptoComApiClient(object):
                     if self.websocket and not self.websocket.open:
                         msg = "Websocket NOT connected. Trying to reconnect..."
                         self.logger.error(msg)
-                        if self.pushover_notifier:
+                        if not self.prevent_pushover_notifications_regarding_disconnected_websocket:
                             self.pushover_notify(msg)
+                            self.prevent_pushover_notifications_regarding_disconnected_websocket = True
                     await self.websocket_connect()
                 message = await self.websocket.recv()
                 event_or_response = await self.parse_message(json.loads(message))
@@ -336,8 +337,7 @@ class CryptoComApiClient(object):
                 self.logger.exception(msg)
                 if message:
                     self.logger.error("Message that failed being parsed: {}".format(message))
-                if self.pushover_notifier:
-                    self.pushover_notify(msg)
+                self.pushover_notify(msg)
                 await asyncio.sleep(1)
 
     def subscribe(self):
@@ -390,15 +390,19 @@ class CryptoComApiClient(object):
             self.websocket = await asyncio.wait_for(websockets.connect(websocket_uri), 10)
         except Exception as e:
             self.logger.exception("Websocket connection exception: {}".format(repr(e)))
-            self.pushover_notify("Websocket connection exception: {}".format(repr(e)))
+            if not self.last_websocket_connection_exception_pushover_message or (self.last_websocket_connection_exception_pushover_message and self.last_websocket_connection_exception_pushover_message != repr(e)):
+                self.pushover_notify("Websocket connection exception: {}".format(repr(e)))
+                self.last_websocket_connection_exception_pushover_message = repr(e)
             if self.websocket:
                 await self.websocket.close()
             return
         self.pushover_notify("Connected to websocket!", 1)
+        self.prevent_pushover_notifications_regarding_disconnected_websocket = False
+        self.last_websocket_connection_exception_pushover_message = None
         await asyncio.sleep(1)  # As requested by crypto.com API
         if self.client_type == self.USER and self.api_key:
             self.authenticate()
-        # Outcommented due to API defect requirering authentication (via public/auth) for public methods
+        # Commented due to API defect requirering authentication (via public/auth) for public methods
         # elif self.client_type == self.USER and not self.api_key:
         #     self.logger.warning("Using USER API without providing api key (it's acceptable only when calling public methods)!")
         #     if self.channels:
