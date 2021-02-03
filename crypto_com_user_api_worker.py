@@ -22,7 +22,7 @@ class CryptoComUserApiWorker(object):
         CryptoComUserApiWorker.setup_logger(self.logger, self.log_file)
         self.transactions_log_file = transactions_log_file if transactions_log_file else "./logs/transactions_{}.log".format(crypto_com_client.crypto_com_user)
         self.transactions_logger = logging.getLogger("transactions_logger_{}".format(crypto_com_client.crypto_com_user))
-        CryptoComUserApiWorker.setup_logger(self.transactions_logger, self.transactions_log_file)
+        CryptoComUserApiWorker.setup_logger(self.transactions_logger, self.transactions_log_file, mode="a")
         self.crypto_com_client = crypto_com_client
         self.shared_market_data = shared_market_data
         self.shared_user_api_data = shared_user_api_data
@@ -35,9 +35,9 @@ class CryptoComUserApiWorker(object):
         self.pushover_notifier = pushover_notifier
 
     @staticmethod
-    def setup_logger(logger, log_file):
+    def setup_logger(logger, log_file, mode="w"):
         logger.setLevel(logging.DEBUG)
-        fh = logging.FileHandler(log_file, mode="w")
+        fh = logging.FileHandler(log_file, mode=mode)
         fh.setLevel(logging.DEBUG)
         ch = logging.StreamHandler()
         ch.setLevel(logging.DEBUG)
