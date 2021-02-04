@@ -3,6 +3,7 @@ import sys
 import asyncio
 import logging
 import multiprocessing.queues
+from decimal import *
 from event_dispatcher import EventDispatcher
 from crypto_com_client import CryptoComClient
 from crypto_com_lib import CryptoComApiClient
@@ -49,8 +50,9 @@ class CryptoComUserApiWorker(object):
         logger.addHandler(fh)
 
     def pushover_notify(self, message, priority=2):
-        message = self.logger.name + ": " + message
-        self.pushover_notifier.notify(message, priority)
+        if self.pushover_notifier:
+            message = self.logger.name + ": " + message
+            self.pushover_notifier.notify(message, priority)
 
     def get_instruments(self):
         '''
@@ -154,6 +156,7 @@ class CryptoComUserApiWorker(object):
 
     def handle_buy_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
+        self.transactions_logger.info("")
         price_in_request = request["price"]
         self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"] = price_in_request
         price_on_crypto_com = self.shared_market_data["price_BTC_buy_for_USDT"]
@@ -165,17 +168,64 @@ class CryptoComUserApiWorker(object):
             self.logger.info("[BUY REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com))
             message = "[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com)
             self.transactions_logger.info(message)
-            if self.pushover_notifier:
-                self.pushover_notify(message)
+            self.pushover_notify(message)
         else:
             self.logger.info("[BUY REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com))
             message = "[BUY] Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com)
             self.transactions_logger.info(message)
-            if self.pushover_notifier:
-                self.pushover_notify(message)
+            self.pushover_notify(message)
+
+        # Get real :)
+        self.transactions_logger.debug("price_BTC_buy_for_USDT: {}".format(self.shared_market_data["price_BTC_buy_for_USDT"]))
+        price_BTC_buy_for_USDT = Decimal(self.shared_market_data["price_BTC_buy_for_USDT"]).quantize(
+            Decimal('1e-' + str(self.shared_user_api_data["tickers"]["BTC_USDT"]["price_decimals"])), rounding=ROUND_UP)
+        self.transactions_logger.debug("price_BTC_buy_for_USDT (Decimal): {}".format(price_BTC_buy_for_USDT))
+        self.transactions_logger.debug("balance_USDT: {}".format(self.shared_user_api_data["balance_USDT"]))
+        balance_USDT = Decimal(self.shared_user_api_data["balance_USDT"]).quantize(Decimal('1e-' + str(2)), rounding=ROUND_DOWN)
+        self.transactions_logger.debug("balance_USDT (Decimal): {}".format(balance_USDT))
+        self.transactions_logger.debug("taker_fee: {}".format(self.shared_market_data["taker_fee"]))
+        taker_fee = Decimal(self.shared_market_data["taker_fee"]).quantize(Decimal('1e-' + str(4)), rounding=ROUND_UP)
+        self.transactions_logger.debug("taker_fee (Decimal): {}".format(taker_fee))
+        fee_BTC_buy_in_BTC = ((balance_USDT / price_BTC_buy_for_USDT) * taker_fee).quantize(
+            Decimal('1e-' + str(8)), rounding=ROUND_UP)
+        self.transactions_logger.debug("fee_BTC_buy_in_BTC (Decimal): {}".format(fee_BTC_buy_in_BTC))
+        self.transactions_logger.debug("last_CRO_price_in_BTC: {}".format(self.shared_market_data["last_CRO_price_in_BTC"]))
+        last_CRO_price_in_BTC = Decimal(self.shared_market_data["last_CRO_price_in_BTC"]).quantize(
+            Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["price_decimals"])), rounding=ROUND_UP)
+        self.transactions_logger.debug("last_CRO_price_in_BTC (Decimal): {}".format(last_CRO_price_in_BTC))
+        fee_BTC_buy_in_CRO = (fee_BTC_buy_in_BTC / last_CRO_price_in_BTC).quantize(
+            Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["quantity_decimals"])), rounding=ROUND_UP)
+        self.transactions_logger.debug("fee_BTC_buy_in_CRO (Decimal): {}".format(fee_BTC_buy_in_CRO))
+        CRO_holding_backup = Decimal(self.shared_market_data["CRO_holding_backup"]).quantize(Decimal('1e-' + str(2)), rounding=ROUND_UP)
+        self.transactions_logger.debug("CRO_holding_backup (Decimal): {}".format(CRO_holding_backup))
+        fee_BTC_buy_in_CRO = (fee_BTC_buy_in_CRO + (fee_BTC_buy_in_CRO * CRO_holding_backup)).quantize(
+            Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["quantity_decimals"])), rounding=ROUND_UP)
+        self.transactions_logger.debug("balance_CRO: {}".format(self.shared_user_api_data["balance_CRO"]))
+        balance_CRO = Decimal(self.shared_user_api_data["balance_CRO"]).quantize(Decimal('1e-' + str(8)), rounding=ROUND_DOWN)
+        self.transactions_logger.debug("balance_CRO (Decimal): {}".format(balance_CRO))
+
+        if fee_BTC_buy_in_CRO > balance_CRO:
+            missing_CRO_balance = fee_BTC_buy_in_CRO - balance_CRO
+            self.transactions_logger.debug("missing_CRO_balance (Decimal): {}".format(missing_CRO_balance))
+            self.transactions_logger.debug("price_CRO_buy_for_USDT: {}".format(self.shared_market_data["price_CRO_buy_for_USDT"]))
+            price_CRO_buy_for_USDT = Decimal(self.shared_market_data["price_CRO_buy_for_USDT"]).quantize(
+                Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_USDT"]["price_decimals"])), rounding=ROUND_UP)
+            self.transactions_logger.debug("price_CRO_buy_for_USDT (Decimal): {}".format(price_CRO_buy_for_USDT))
+            USDT_needed_for_missing_CRO_buy = (missing_CRO_balance / price_CRO_buy_for_USDT).quantize(
+                Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_USDT"]["price_decimals"])), rounding=ROUND_UP)
+            self.transactions_logger.debug("USDT_needed_for_missing_CRO_buy (Decimal): {}".format(USDT_needed_for_missing_CRO_buy))
+            message = "Placing a market order on CRO/USDT pair for missing CRO balance: {}. USDT to spend: {}".format(
+                    missing_CRO_balance, USDT_needed_for_missing_CRO_buy)
+            self.logger.info(message)
+            self.pushover_notify(message)
+        else:
+            message = "Placing a market order on BTC/USDT pair for USDT balance: {}".format(balance_USDT)
+            self.logger.info(message)
+            self.pushover_notify(message)
 
     def handle_sell_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
+        self.transactions_logger.info("")
         price_in_request = request["price"]
         self.shared_user_api_data["last_transaction_BTC_sell_price_in_fiat"] = price_in_request
         price_on_crypto_com = self.shared_market_data["price_BTC_sell_to_USDT"]
@@ -190,14 +240,61 @@ class CryptoComUserApiWorker(object):
             self.logger.info("[SELL REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
             message = "[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt)
             self.transactions_logger.info(message)
-            if self.pushover_notifier:
-                self.pushover_notify(message)
+            self.pushover_notify(message)
         else:
             self.logger.info("[SELL REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt))
             message = "[SELL] Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt)
             self.transactions_logger.info(message)
-            if self.pushover_notifier:
-                self.pushover_notify(message)
+            self.pushover_notify(message)
+
+        # Get real :)
+        self.transactions_logger.debug("price_BTC_sell_to_USDT: {}".format(self.shared_market_data["price_BTC_sell_to_USDT"]))
+        price_BTC_sell_to_USDT = Decimal(self.shared_market_data["price_BTC_sell_to_USDT"]).quantize(
+            Decimal('1e-' + str(self.shared_user_api_data["tickers"]["BTC_USDT"]["price_decimals"])), rounding=ROUND_UP)
+        self.transactions_logger.debug("price_BTC_sell_to_USDT (Decimal): {}".format(price_BTC_sell_to_USDT))
+        self.transactions_logger.debug("balance_BTC: {}".format(self.shared_user_api_data["balance_BTC"]))
+        balance_BTC = Decimal(self.shared_user_api_data["balance_BTC"]).quantize(Decimal('1e-' + str(8)), rounding=ROUND_DOWN)
+        self.transactions_logger.debug("balance_BTC (Decimal): {}".format(balance_BTC))
+        self.transactions_logger.debug("taker_fee: {}".format(self.shared_market_data["taker_fee"]))
+        taker_fee = Decimal(self.shared_market_data["taker_fee"]).quantize(Decimal('1e-' + str(4)), rounding=ROUND_UP)
+        self.transactions_logger.debug("taker_fee (Decimal): {}".format(taker_fee))
+        fee_BTC_sell_in_USDT = ((balance_BTC * price_BTC_sell_to_USDT) * taker_fee).quantize(Decimal('1e-' + str(2)), rounding=ROUND_UP)
+        self.transactions_logger.debug("fee_BTC_sell_in_USDT (Decimal): {}".format(fee_BTC_sell_in_USDT))
+        self.transactions_logger.debug("last_CRO_price_in_USDT: {}".format(self.shared_market_data["last_CRO_price_in_USDT"]))
+        last_CRO_price_in_USDT = Decimal(self.shared_market_data["last_CRO_price_in_USDT"]).quantize(
+            Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_USDT"]["price_decimals"])), rounding=ROUND_UP)
+        self.transactions_logger.debug("last_CRO_price_in_USDT (Decimal): {}".format(last_CRO_price_in_USDT))
+        fee_BTC_sell_in_CRO = (fee_BTC_sell_in_USDT / last_CRO_price_in_USDT).quantize(
+            Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["quantity_decimals"])), rounding=ROUND_UP)
+        self.transactions_logger.debug("fee_BTC_sell_in_CRO (Decimal): {}".format(fee_BTC_sell_in_CRO))
+        self.transactions_logger.debug("CRO_holding_backup: {}".format(self.shared_market_data["CRO_holding_backup"]))
+        CRO_holding_backup = Decimal(self.shared_market_data["CRO_holding_backup"]).quantize(Decimal('1e-' + str(2)), rounding=ROUND_UP)
+        self.transactions_logger.debug("CRO_holding_backup (Decimal): {}".format(CRO_holding_backup))
+        fee_BTC_sell_in_CRO = (fee_BTC_sell_in_CRO + (fee_BTC_sell_in_CRO * CRO_holding_backup)).quantize(
+            Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["quantity_decimals"])), rounding=ROUND_UP)
+        self.transactions_logger.debug("fee_BTC_sell_in_CRO (Decimal): {}".format(fee_BTC_sell_in_CRO))
+        self.transactions_logger.debug("balance_CRO: {}".format(self.shared_user_api_data["balance_CRO"]))
+        balance_CRO = Decimal(self.shared_user_api_data["balance_CRO"]).quantize(Decimal('1e-' + str(8)), rounding=ROUND_DOWN)
+        self.transactions_logger.debug("balance_CRO (Decimal): {}".format(balance_CRO))
+
+        if fee_BTC_sell_in_CRO > balance_CRO:
+            missing_CRO_balance = fee_BTC_sell_in_CRO - balance_CRO
+            self.transactions_logger.debug("missing_CRO_balance (Decimal): {}".format(missing_CRO_balance))
+            self.transactions_logger.debug("price_CRO_buy_for_BTC: {}".format(self.shared_market_data["price_CRO_buy_for_BTC"]))
+            price_CRO_buy_for_BTC = Decimal(self.shared_market_data["price_CRO_buy_for_BTC"]).quantize(
+                Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["price_decimals"])), rounding=ROUND_UP)
+            self.transactions_logger.debug("price_CRO_buy_for_BTC (Decimal): {}".format(price_CRO_buy_for_BTC))
+            BTC_needed_for_missing_CRO_buy = (missing_CRO_balance / price_CRO_buy_for_BTC).quantize(
+                Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["price_decimals"])), rounding=ROUND_UP)
+            self.transactions_logger.debug("BTC_needed_for_missing_CRO_buy (Decimal): {}".format(BTC_needed_for_missing_CRO_buy))
+            message = "Placing a market order on CRO/BTC pair for missing CRO balance: {}. BTC to spend: {}".format(
+                    missing_CRO_balance, BTC_needed_for_missing_CRO_buy)
+            self.logger.info(message)
+            self.pushover_notify(message)
+        else:
+            message = "Placing a market order on BTC/USDT pair for BTC balance: {}".format(balance_BTC)
+            self.logger.info(message)
+            self.pushover_notify(message)
 
     def handle_buy_sell_requests(self):
         '''
@@ -270,8 +367,7 @@ class CryptoComUserApiWorker(object):
             #     "public/get-instruments": self.get_instruments
             # }
         )
-        if self.pushover_notifier:
-            self.pushover_notify("Started!", 1)
+        self.pushover_notify("Started!", 1)
 
         while True:
             await asyncio.sleep(0)  # This line is VERY important: In the case of trying to concurrently run two looping Tasks (here handle_requests() and handle_events_and_responses()), unless the Task has an internal await expression, it will get stuck in the while loop, effectively blocking other tasks from running (much like a normal while loop). However, as soon the Tasks have to (a)wait, they run concurrently without an issue. Check this: https://stackoverflow.com/questions/29269370/how-to-properly-create-and-run-concurrent-tasks-using-pythons-asyncio-module
@@ -282,8 +378,7 @@ class CryptoComUserApiWorker(object):
                 except Exception as e:
                     message = "Exception during handling buy/sell request: {}".format(repr(e))
                     self.logger.exception(message)
-                    if self.pushover_notifier:
-                        self.pushover_notify(message)
+                    self.pushover_notify(message)
                     await asyncio.sleep(1)
 
     async def cleanup(self):
@@ -302,21 +397,18 @@ class CryptoComUserApiWorker(object):
                 self.logger.info("Interrupted")
                 asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
-                if self.pushover_notifier:
-                    self.pushover_notify("Interrupted! Bye bye!")
+                self.pushover_notify("Interrupted! Bye bye!")
                 self.logger.info("Bye bye!")
                 try:
                     sys.exit(0)
                 except SystemExit:
                     os._exit(0)
             except Exception as e:
-                if self.pushover_notifier:
-                    self.pushover_notify(repr(e))
+                self.pushover_notify(repr(e))
                 self.logger.exception(repr(e))
             finally:
                 asyncio.get_event_loop().run_until_complete(self.cleanup())
                 pidfile.close(fh=pidfile.fh, cleanup=True)
-                if self.pushover_notifier:
-                    self.pushover_notify("Bye bye!")
+                self.pushover_notify("Bye bye!")
                 self.logger.info("Bye bye!")
 

@@ -141,9 +141,6 @@ if __name__ == '__main__':
         shared_market_data = manager.dict({
             "taker_fee": exchange_variables["taker_fee"],
             "CRO_holding_backup": exchange_variables["CRO_holding_backup"],
-            "balance_USDT": 0,
-            "balance_BTC": 0,
-            "balance_CRO": 0,
             "price_BTC_sell_to_USDT": 0,
             "price_CRO_buy_for_BTC": 0,
             "fee_BTC_sell_in_USDT": 0,
