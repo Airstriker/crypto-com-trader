@@ -165,13 +165,13 @@ class CryptoComUserApiWorker(object):
         eur_usd_exchange_rate = self.shared_market_data["EUR_USD_exchange_rate"]
         if fiat == "EUR" and eur_usd_exchange_rate != 0:
             price_in_request_in_usd = Decimal(price_in_request).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
-            self.logger.info("[BUY REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com))
-            message = "[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com)
+            self.logger.info("[BUY REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2)))))
+            message = "[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))))
             self.transactions_logger.info(message)
             self.pushover_notify(message)
         else:
-            self.logger.info("[BUY REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com))
-            message = "[BUY] Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_on_crypto_com)
+            self.logger.info("[BUY REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2)))))
+            message = "[BUY] Price in request: {} [{}]. Price on crypto.com: {} [USDT]".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))))
             self.transactions_logger.info(message)
             self.pushover_notify(message)
 
@@ -236,13 +236,13 @@ class CryptoComUserApiWorker(object):
         if fiat == "EUR" and eur_usd_exchange_rate != 0:
             price_in_request_in_usd = Decimal(price_in_request).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
             profit_in_fiat_in_usd = Decimal(profit_in_fiat).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
-            self.logger.info("[SELL REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
-            message = "[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt)
+            self.logger.info("[SELL REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))), profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
+            message = "[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))), profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt)
             self.transactions_logger.info(message)
             self.pushover_notify(message)
         else:
-            self.logger.info("[SELL REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt))
-            message = "[SELL] Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_on_crypto_com, profit_in_fiat, fiat, profit_in_usdt)
+            self.logger.info("[SELL REQUEST] received! Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))), profit_in_fiat, fiat, profit_in_usdt))
+            message = "[SELL] Price in request: {} [{}]. Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}]. Profit on crypto.com: {} [USDT].".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))), profit_in_fiat, fiat, profit_in_usdt)
             self.transactions_logger.info(message)
             self.pushover_notify(message)
 
