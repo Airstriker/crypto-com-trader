@@ -176,19 +176,15 @@ class CryptoComUserApiWorker(object):
             self.pushover_notify(message)
 
         # Get real :)
-        self.transactions_logger.debug("price_BTC_buy_for_USDT: {}".format(self.shared_market_data["price_BTC_buy_for_USDT"]))
         price_BTC_buy_for_USDT = Decimal(self.shared_market_data["price_BTC_buy_for_USDT"]).quantize(
             Decimal('1e-' + str(self.shared_user_api_data["tickers"]["BTC_USDT"]["price_decimals"])), rounding=ROUND_UP)
         self.transactions_logger.debug("price_BTC_buy_for_USDT (Decimal): {}".format(price_BTC_buy_for_USDT))
-        self.transactions_logger.debug("balance_USDT: {}".format(self.shared_user_api_data["balance_USDT"]))
         balance_USDT = Decimal(self.shared_user_api_data["balance_USDT"]).quantize(Decimal('1e-' + str(2)), rounding=ROUND_DOWN)
         self.transactions_logger.debug("balance_USDT (Decimal): {}".format(balance_USDT))
-        self.transactions_logger.debug("taker_fee: {}".format(self.shared_market_data["taker_fee"]))
         taker_fee = Decimal(self.shared_market_data["taker_fee"]).quantize(Decimal('1e-' + str(4)), rounding=ROUND_UP)
         self.transactions_logger.debug("taker_fee (Decimal): {}".format(taker_fee))
         fee_BTC_buy_in_BTC = ((balance_USDT / price_BTC_buy_for_USDT) * taker_fee).quantize(Decimal('1e-' + str(8)), rounding=ROUND_UP)
         self.transactions_logger.debug("fee_BTC_buy_in_BTC (Decimal): {}".format(fee_BTC_buy_in_BTC))
-        self.transactions_logger.debug("last_CRO_price_in_BTC: {}".format(self.shared_market_data["last_CRO_price_in_BTC"]))
         last_CRO_price_in_BTC = Decimal(self.shared_market_data["last_CRO_price_in_BTC"]).quantize(
             Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["price_decimals"])), rounding=ROUND_UP)
         self.transactions_logger.debug("last_CRO_price_in_BTC (Decimal): {}".format(last_CRO_price_in_BTC))
@@ -199,14 +195,12 @@ class CryptoComUserApiWorker(object):
         self.transactions_logger.debug("CRO_holding_backup (Decimal): {}".format(CRO_holding_backup))
         fee_BTC_buy_in_CRO = (fee_BTC_buy_in_CRO + (fee_BTC_buy_in_CRO * CRO_holding_backup)).quantize(
             Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["quantity_decimals"])), rounding=ROUND_UP)
-        self.transactions_logger.debug("balance_CRO: {}".format(self.shared_user_api_data["balance_CRO"]))
         balance_CRO = Decimal(self.shared_user_api_data["balance_CRO"]).quantize(Decimal('1e-' + str(8)), rounding=ROUND_DOWN)
         self.transactions_logger.debug("balance_CRO (Decimal): {}".format(balance_CRO))
 
         if fee_BTC_buy_in_CRO > balance_CRO:
             missing_CRO_balance = fee_BTC_buy_in_CRO - balance_CRO
             self.transactions_logger.debug("missing_CRO_balance (Decimal): {}".format(missing_CRO_balance))
-            self.transactions_logger.debug("price_CRO_buy_for_USDT: {}".format(self.shared_market_data["price_CRO_buy_for_USDT"]))
             price_CRO_buy_for_USDT = Decimal(self.shared_market_data["price_CRO_buy_for_USDT"]).quantize(
                 Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_USDT"]["price_decimals"])), rounding=ROUND_UP)
             self.transactions_logger.debug("price_CRO_buy_for_USDT (Decimal): {}".format(price_CRO_buy_for_USDT))
@@ -247,39 +241,32 @@ class CryptoComUserApiWorker(object):
             self.pushover_notify(message)
 
         # Get real :)
-        self.transactions_logger.debug("price_BTC_sell_to_USDT: {}".format(self.shared_market_data["price_BTC_sell_to_USDT"]))
         price_BTC_sell_to_USDT = Decimal(self.shared_market_data["price_BTC_sell_to_USDT"]).quantize(
             Decimal('1e-' + str(self.shared_user_api_data["tickers"]["BTC_USDT"]["price_decimals"])), rounding=ROUND_UP)
         self.transactions_logger.debug("price_BTC_sell_to_USDT (Decimal): {}".format(price_BTC_sell_to_USDT))
-        self.transactions_logger.debug("balance_BTC: {}".format(self.shared_user_api_data["balance_BTC"]))
         balance_BTC = Decimal(self.shared_user_api_data["balance_BTC"]).quantize(Decimal('1e-' + str(8)), rounding=ROUND_DOWN)
         self.transactions_logger.debug("balance_BTC (Decimal): {}".format(balance_BTC))
-        self.transactions_logger.debug("taker_fee: {}".format(self.shared_market_data["taker_fee"]))
         taker_fee = Decimal(self.shared_market_data["taker_fee"]).quantize(Decimal('1e-' + str(4)), rounding=ROUND_UP)
         self.transactions_logger.debug("taker_fee (Decimal): {}".format(taker_fee))
         fee_BTC_sell_in_USDT = ((balance_BTC * price_BTC_sell_to_USDT) * taker_fee).quantize(Decimal('1e-' + str(2)), rounding=ROUND_UP)
         self.transactions_logger.debug("fee_BTC_sell_in_USDT (Decimal): {}".format(fee_BTC_sell_in_USDT))
-        self.transactions_logger.debug("last_CRO_price_in_USDT: {}".format(self.shared_market_data["last_CRO_price_in_USDT"]))
         last_CRO_price_in_USDT = Decimal(self.shared_market_data["last_CRO_price_in_USDT"]).quantize(
             Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_USDT"]["price_decimals"])), rounding=ROUND_UP)
         self.transactions_logger.debug("last_CRO_price_in_USDT (Decimal): {}".format(last_CRO_price_in_USDT))
         fee_BTC_sell_in_CRO = (fee_BTC_sell_in_USDT / last_CRO_price_in_USDT).quantize(
             Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["quantity_decimals"])), rounding=ROUND_UP)
         self.transactions_logger.debug("fee_BTC_sell_in_CRO (Decimal): {}".format(fee_BTC_sell_in_CRO))
-        self.transactions_logger.debug("CRO_holding_backup: {}".format(self.shared_market_data["CRO_holding_backup"]))
         CRO_holding_backup = Decimal(self.shared_market_data["CRO_holding_backup"]).quantize(Decimal('1e-' + str(2)), rounding=ROUND_UP)
         self.transactions_logger.debug("CRO_holding_backup (Decimal): {}".format(CRO_holding_backup))
         fee_BTC_sell_in_CRO = (fee_BTC_sell_in_CRO + (fee_BTC_sell_in_CRO * CRO_holding_backup)).quantize(
             Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["quantity_decimals"])), rounding=ROUND_UP)
         self.transactions_logger.debug("fee_BTC_sell_in_CRO (Decimal): {}".format(fee_BTC_sell_in_CRO))
-        self.transactions_logger.debug("balance_CRO: {}".format(self.shared_user_api_data["balance_CRO"]))
         balance_CRO = Decimal(self.shared_user_api_data["balance_CRO"]).quantize(Decimal('1e-' + str(8)), rounding=ROUND_DOWN)
         self.transactions_logger.debug("balance_CRO (Decimal): {}".format(balance_CRO))
 
         if fee_BTC_sell_in_CRO > balance_CRO:
             missing_CRO_balance = fee_BTC_sell_in_CRO - balance_CRO
             self.transactions_logger.debug("missing_CRO_balance (Decimal): {}".format(missing_CRO_balance))
-            self.transactions_logger.debug("price_CRO_buy_for_BTC: {}".format(self.shared_market_data["price_CRO_buy_for_BTC"]))
             price_CRO_buy_for_BTC = Decimal(self.shared_market_data["price_CRO_buy_for_BTC"]).quantize(
                 Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["price_decimals"])), rounding=ROUND_UP)
             self.transactions_logger.debug("price_CRO_buy_for_BTC (Decimal): {}".format(price_CRO_buy_for_BTC))
