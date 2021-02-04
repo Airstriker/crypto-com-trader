@@ -53,22 +53,22 @@ class CryptoComMarketDataWorker(object):
         ]
         '''
         try:
-            self.shared_market_data["price_BTC_sell_to_USDT"] = event["data"][0]["b"]
-            self.shared_market_data["price_BTC_buy_for_USDT"] = event["data"][0]["k"]
+            self.shared_market_data["price_BTC_sell_to_USDT"] = str(event["data"][0]["b"])
+            self.shared_market_data["price_BTC_buy_for_USDT"] = str(event["data"][0]["k"])
         except Exception as e:
             raise Exception("Wrong data structure in ticker.BTC_USDT channel event. Exception: {}".format(repr(e)))
 
     def handle_channel_event_ticker_CRO_USDT(self, event: dict):
         try:
-            self.shared_market_data["price_CRO_buy_for_USDT"] = event["data"][0]["k"]
-            self.shared_market_data["last_CRO_price_in_USDT"] = event["data"][0]["a"]
+            self.shared_market_data["price_CRO_buy_for_USDT"] = str(event["data"][0]["k"])
+            self.shared_market_data["last_CRO_price_in_USDT"] = str(event["data"][0]["a"])
         except Exception as e:
             raise Exception("Wrong data structure in ticker.CRO_USDT channel event. Exception: {}".format(repr(e)))
 
     def handle_channel_event_ticker_CRO_BTC(self, event: dict):
         try:
-            self.shared_market_data["price_CRO_buy_for_BTC"] = event["data"][0]["k"]
-            self.shared_market_data["last_CRO_price_in_BTC"] = event["data"][0]["a"]
+            self.shared_market_data["price_CRO_buy_for_BTC"] = str(event["data"][0]["k"])
+            self.shared_market_data["last_CRO_price_in_BTC"] = str(event["data"][0]["a"])
         except Exception as e:
             raise Exception("Wrong data structure in ticker.CRO_BTC channel event. Exception: {}".format(repr(e)))
 

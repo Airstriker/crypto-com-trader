@@ -54,7 +54,7 @@ def get_eur_usd_exchange_rate(url):
     try:
         r = requests.get(url, timeout=4)
         data = r.json()
-        shared_market_data["EUR_USD_exchange_rate"] = data["rates"]["USD"]
+        shared_market_data["EUR_USD_exchange_rate"] = str(data["rates"]["USD"])
     except Exception as e:
         pass
 
@@ -141,42 +141,42 @@ if __name__ == '__main__':
         shared_market_data = manager.dict({
             "taker_fee": exchange_variables["taker_fee"],
             "CRO_holding_backup": exchange_variables["CRO_holding_backup"],
-            "price_BTC_sell_to_USDT": 0,
-            "price_CRO_buy_for_BTC": 0,
-            "fee_BTC_sell_in_USDT": 0,
-            "price_CRO_buy_for_USDT": 0,
-            "last_CRO_price_in_USDT": 0,
-            "last_CRO_price_in_BTC": 0,
-            "fee_BTC_sell_in_CRO": 0,
-            "price_BTC_buy_for_USDT": 0,
-            "fee_BTC_buy_in_BTC": 0,
-            "fee_BTC_buy_in_CRO": 0,
-            "EUR_USD_exchange_rate": 0
+            "price_BTC_sell_to_USDT": '0',
+            "price_CRO_buy_for_BTC": '0',
+            "fee_BTC_sell_in_USDT": '0',
+            "price_CRO_buy_for_USDT": '0',
+            "last_CRO_price_in_USDT": '0',
+            "last_CRO_price_in_BTC": '0',
+            "fee_BTC_sell_in_CRO": '0',
+            "price_BTC_buy_for_USDT": '0',
+            "fee_BTC_buy_in_BTC": '0',
+            "fee_BTC_buy_in_CRO": '0',
+            "EUR_USD_exchange_rate": '0'
         })  # Data shared between processes
 
         for crypto_com_client in crypto_com_clients:
             shared_user_api_data = manager.dict({
                 "tickers": {
                     "BTC_USDT": {
-                        "price_decimals": 0,
-                        "quantity_decimals": 0
+                        "price_decimals": '0',
+                        "quantity_decimals": '0'
                     },
                     "CRO_USDT": {
-                        "price_decimals": 0,
-                        "quantity_decimals": 0
+                        "price_decimals": '0',
+                        "quantity_decimals": '0'
                     },
                     "CRO_BTC": {
-                        "price_decimals": 0,
-                        "quantity_decimals": 0
+                        "price_decimals": '0',
+                        "quantity_decimals": '0'
                     }
                 },
-                "balance_USDT": 0,
-                "balance_BTC": 0,
-                "balance_CRO": 0,
-                "last_transaction_BTC_buy_price_in_fiat": 0,
-                "last_transaction_BTC_buy_price_in_USDT": 0,
-                "last_transaction_BTC_sell_price_in_fiat": 0,
-                "last_transaction_BTC_sell_price_in_USDT": 0
+                "balance_USDT": '0',
+                "balance_BTC": '0',
+                "balance_CRO": '0',
+                "last_transaction_BTC_buy_price_in_fiat": '0',
+                "last_transaction_BTC_buy_price_in_USDT": '0',
+                "last_transaction_BTC_sell_price_in_fiat": '0',
+                "last_transaction_BTC_sell_price_in_USDT": '0'
             })
             shared_user_api_data_collection[crypto_com_client.crypto_com_user] = shared_user_api_data
             buy_sell_requests_queue = manager.Queue()

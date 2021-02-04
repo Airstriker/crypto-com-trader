@@ -77,7 +77,7 @@ class CryptoComUserApiWorker(object):
                             # update the decimal values for the ticker - NOTE! the shared data is updated this way on purpose!
                             # Note! Modifications to mutable values or items in dict and list proxies will not be propagated through the manager, because the proxy has no way of knowing when its values or items are modified. To modify such an item, you can re-assign the modified object to the container proxy
                             copied_dict = self.shared_user_api_data["tickers"]
-                            copied_dict[ticker][decimal] = instrument[decimal]
+                            copied_dict[ticker][decimal] = str(instrument[decimal])
                             self.shared_user_api_data["tickers"] = copied_dict
 
             except Exception as e:
@@ -117,13 +117,13 @@ class CryptoComUserApiWorker(object):
             for balance in response["result"]["accounts"]:
                 if balance["currency"] == "USDT":
                     self.logger.info("Updated USDT balance.")
-                    self.shared_user_api_data["balance_USDT"] = balance["available"]
+                    self.shared_user_api_data["balance_USDT"] = str(balance["available"])
                 elif balance["currency"] == "BTC":
                     self.logger.info("Updated BTC balance.")
-                    self.shared_user_api_data["balance_BTC"] = balance["available"]
+                    self.shared_user_api_data["balance_BTC"] = str(balance["available"])
                 elif balance["currency"] == "CRO":
                     self.logger.info("Updated CRO balance.")
-                    self.shared_user_api_data["balance_CRO"] = balance["available"]
+                    self.shared_user_api_data["balance_CRO"] = str(balance["available"])
         except Exception as e:
             raise Exception("Wrong data structure in private/get-account-summary response: {}. Exception: {}".format(response, repr(e)))
 
@@ -144,27 +144,27 @@ class CryptoComUserApiWorker(object):
             for balance in event["data"]:
                 if balance["currency"] == "USDT":
                     self.logger.info("Updated USDT balance.")
-                    self.shared_user_api_data["balance_USDT"] = balance["available"]
+                    self.shared_user_api_data["balance_USDT"] = str(balance["available"])
                 elif balance["currency"] == "BTC":
                     self.logger.info("Updated BTC balance.")
-                    self.shared_user_api_data["balance_BTC"] = balance["available"]
+                    self.shared_user_api_data["balance_BTC"] = str(balance["available"])
                 elif balance["currency"] == "CRO":
                     self.logger.info("Updated CRO balance.")
-                    self.shared_user_api_data["balance_CRO"] = balance["available"]
+                    self.shared_user_api_data["balance_CRO"] = str(balance["available"])
         except Exception as e:
             raise Exception("Wrong data structure in user.balance channel event. Exception: {}".format(repr(e)))
 
     def handle_buy_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
         self.transactions_logger.info("")
-        price_in_request = request["price"]
+        price_in_request = str(request["price"])
         self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"] = price_in_request
         price_on_crypto_com = self.shared_market_data["price_BTC_buy_for_USDT"]
         self.shared_user_api_data["last_transaction_BTC_buy_price_in_USDT"] = price_on_crypto_com
         fiat = request["fiat"]
         eur_usd_exchange_rate = self.shared_market_data["EUR_USD_exchange_rate"]
         if fiat == "EUR" and eur_usd_exchange_rate != 0:
-            price_in_request_in_usd = float(price_in_request) * float(eur_usd_exchange_rate)
+            price_in_request_in_usd = Decimal(price_in_request).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
             self.logger.info("[BUY REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com))
             message = "[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com)
             self.transactions_logger.info(message)
@@ -186,8 +186,7 @@ class CryptoComUserApiWorker(object):
         self.transactions_logger.debug("taker_fee: {}".format(self.shared_market_data["taker_fee"]))
         taker_fee = Decimal(self.shared_market_data["taker_fee"]).quantize(Decimal('1e-' + str(4)), rounding=ROUND_UP)
         self.transactions_logger.debug("taker_fee (Decimal): {}".format(taker_fee))
-        fee_BTC_buy_in_BTC = ((balance_USDT / price_BTC_buy_for_USDT) * taker_fee).quantize(
-            Decimal('1e-' + str(8)), rounding=ROUND_UP)
+        fee_BTC_buy_in_BTC = ((balance_USDT / price_BTC_buy_for_USDT) * taker_fee).quantize(Decimal('1e-' + str(8)), rounding=ROUND_UP)
         self.transactions_logger.debug("fee_BTC_buy_in_BTC (Decimal): {}".format(fee_BTC_buy_in_BTC))
         self.transactions_logger.debug("last_CRO_price_in_BTC: {}".format(self.shared_market_data["last_CRO_price_in_BTC"]))
         last_CRO_price_in_BTC = Decimal(self.shared_market_data["last_CRO_price_in_BTC"]).quantize(
@@ -226,17 +225,17 @@ class CryptoComUserApiWorker(object):
     def handle_sell_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
         self.transactions_logger.info("")
-        price_in_request = request["price"]
+        price_in_request = str(request["price"])
         self.shared_user_api_data["last_transaction_BTC_sell_price_in_fiat"] = price_in_request
         price_on_crypto_com = self.shared_market_data["price_BTC_sell_to_USDT"]
         self.shared_user_api_data["last_transaction_BTC_sell_price_in_USDT"] = price_on_crypto_com
         fiat = request["fiat"]
-        profit_in_fiat = (float(self.shared_user_api_data["last_transaction_BTC_sell_price_in_fiat"]) - float(self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"])) if self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"] else 0
-        profit_in_usdt = (float(self.shared_user_api_data["last_transaction_BTC_sell_price_in_USDT"]) - float(self.shared_user_api_data["last_transaction_BTC_buy_price_in_USDT"])) if self.shared_user_api_data["last_transaction_BTC_buy_price_in_USDT"] else 0
+        profit_in_fiat = (Decimal(self.shared_user_api_data["last_transaction_BTC_sell_price_in_fiat"]).quantize(Decimal('1e-' + str(2))) - Decimal(self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"]).quantize(Decimal('1e-' + str(2)))) if self.shared_user_api_data["last_transaction_BTC_buy_price_in_fiat"] else Decimal('0').quantize(Decimal('1e-' + str(2)))
+        profit_in_usdt = (Decimal(self.shared_user_api_data["last_transaction_BTC_sell_price_in_USDT"]).quantize(Decimal('1e-' + str(2))) - Decimal(self.shared_user_api_data["last_transaction_BTC_buy_price_in_USDT"]).quantize(Decimal('1e-' + str(2)))) if self.shared_user_api_data["last_transaction_BTC_buy_price_in_USDT"] else Decimal('0').quantize(Decimal('1e-' + str(2)))
         eur_usd_exchange_rate = self.shared_market_data["EUR_USD_exchange_rate"]
         if fiat == "EUR" and eur_usd_exchange_rate != 0:
-            price_in_request_in_usd = float(price_in_request) * float(eur_usd_exchange_rate)
-            profit_in_fiat_in_usd = float(profit_in_fiat) * float(eur_usd_exchange_rate)
+            price_in_request_in_usd = Decimal(price_in_request).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
+            profit_in_fiat_in_usd = Decimal(profit_in_fiat).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
             self.logger.info("[SELL REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
             message = "[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(price_in_request, fiat, price_in_request_in_usd, price_on_crypto_com, profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt)
             self.transactions_logger.info(message)
