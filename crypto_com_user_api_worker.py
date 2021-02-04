@@ -166,7 +166,7 @@ class CryptoComUserApiWorker(object):
         if fiat == "EUR" and eur_usd_exchange_rate != 0:
             price_in_request_in_usd = Decimal(price_in_request).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
             self.logger.info("[BUY REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2)))))
-            message = "[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))))
+            message = "[BUY] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd.quantize(Decimal('1e-' + str(2))), Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))))
             self.transactions_logger.info(message)
             self.pushover_notify(message)
         else:
@@ -216,11 +216,11 @@ class CryptoComUserApiWorker(object):
             message = "Placing a market order on CRO/USDT pair for missing CRO balance: {}. USDT to spend: {}".format(
                     missing_CRO_balance, USDT_needed_for_missing_CRO_buy)
             self.logger.info(message)
-            self.pushover_notify(message)
+            #self.pushover_notify(message)
         else:
             message = "Placing a market order on BTC/USDT pair for USDT balance: {}".format(balance_USDT)
             self.logger.info(message)
-            self.pushover_notify(message)
+            #self.pushover_notify(message)
 
     def handle_sell_request(self, request: dict):
         # Compare the price from request with current market price from crypto.com
@@ -236,8 +236,8 @@ class CryptoComUserApiWorker(object):
         if fiat == "EUR" and eur_usd_exchange_rate != 0:
             price_in_request_in_usd = Decimal(price_in_request).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
             profit_in_fiat_in_usd = Decimal(profit_in_fiat).quantize(Decimal('1e-' + str(2))) * Decimal(eur_usd_exchange_rate).quantize(Decimal('1e-' + str(2)))
-            self.logger.info("[SELL REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))), profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt))
-            message = "[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd, Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))), profit_in_fiat, fiat, profit_in_fiat_in_usd, profit_in_usdt)
+            self.logger.info("[SELL REQUEST] received! Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd.quantize(Decimal('1e-' + str(2))), Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))), profit_in_fiat, fiat, profit_in_fiat_in_usd.quantize(Decimal('1e-' + str(2))), profit_in_usdt))
+            message = "[SELL] Price in request: {} [{}] ({} [USD]). Price on crypto.com: {} [USDT]. Profit in fiat: {} [{}] ({} [USD]). Profit on crypto.com: {} [USDT].".format(Decimal(price_in_request).quantize(Decimal('1e-' + str(2))), fiat, price_in_request_in_usd.quantize(Decimal('1e-' + str(2))), Decimal(price_on_crypto_com).quantize(Decimal('1e-' + str(2))), profit_in_fiat, fiat, profit_in_fiat_in_usd.quantize(Decimal('1e-' + str(2))), profit_in_usdt)
             self.transactions_logger.info(message)
             self.pushover_notify(message)
         else:
@@ -289,11 +289,11 @@ class CryptoComUserApiWorker(object):
             message = "Placing a market order on CRO/BTC pair for missing CRO balance: {}. BTC to spend: {}".format(
                     missing_CRO_balance, BTC_needed_for_missing_CRO_buy)
             self.logger.info(message)
-            self.pushover_notify(message)
+            #self.pushover_notify(message)
         else:
             message = "Placing a market order on BTC/USDT pair for BTC balance: {}".format(balance_BTC)
             self.logger.info(message)
-            self.pushover_notify(message)
+            #self.pushover_notify(message)
 
     def handle_buy_sell_requests(self):
         '''
