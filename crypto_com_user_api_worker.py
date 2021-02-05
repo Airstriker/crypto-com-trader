@@ -204,7 +204,7 @@ class CryptoComUserApiWorker(object):
             price_CRO_buy_for_USDT = Decimal(self.shared_market_data["price_CRO_buy_for_USDT"]).quantize(
                 Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_USDT"]["price_decimals"])), rounding=ROUND_UP)
             self.transactions_logger.debug("price_CRO_buy_for_USDT (Decimal): {}".format(price_CRO_buy_for_USDT))
-            USDT_needed_for_missing_CRO_buy = (missing_CRO_balance / price_CRO_buy_for_USDT).quantize(
+            USDT_needed_for_missing_CRO_buy = (missing_CRO_balance * price_CRO_buy_for_USDT).quantize(
                 Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_USDT"]["price_decimals"])), rounding=ROUND_UP)
             self.transactions_logger.debug("USDT_needed_for_missing_CRO_buy (Decimal): {}".format(USDT_needed_for_missing_CRO_buy))
             message = "Placing a market order on CRO/USDT pair for missing CRO balance: {}. USDT to spend: {}".format(
@@ -270,7 +270,7 @@ class CryptoComUserApiWorker(object):
             price_CRO_buy_for_BTC = Decimal(self.shared_market_data["price_CRO_buy_for_BTC"]).quantize(
                 Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["price_decimals"])), rounding=ROUND_UP)
             self.transactions_logger.debug("price_CRO_buy_for_BTC (Decimal): {}".format(price_CRO_buy_for_BTC))
-            BTC_needed_for_missing_CRO_buy = (missing_CRO_balance / price_CRO_buy_for_BTC).quantize(
+            BTC_needed_for_missing_CRO_buy = (missing_CRO_balance * price_CRO_buy_for_BTC).quantize(
                 Decimal('1e-' + str(self.shared_user_api_data["tickers"]["CRO_BTC"]["price_decimals"])), rounding=ROUND_UP)
             self.transactions_logger.debug("BTC_needed_for_missing_CRO_buy (Decimal): {}".format(BTC_needed_for_missing_CRO_buy))
             message = "Placing a market order on CRO/BTC pair for missing CRO balance: {}. BTC to spend: {}".format(
