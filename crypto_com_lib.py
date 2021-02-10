@@ -161,6 +161,9 @@ class CryptoComApiClient(object):
         self._next_id += 1
         return i
 
+    def current_id(self):
+        return self._next_id
+
     def send(self, request: dict):
         self.requests_queue.put(request)
 

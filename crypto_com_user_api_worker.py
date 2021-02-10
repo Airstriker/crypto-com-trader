@@ -34,6 +34,7 @@ class CryptoComUserApiWorker(object):
         self.initialized = False
         self.periodic_calls = []
         self.pushover_notifier = pushover_notifier
+        self.client_orders = {}
 
     @staticmethod
     def setup_logger(logger, log_file, mode="w"):
@@ -102,15 +103,17 @@ class CryptoComUserApiWorker(object):
 
     def handle_response_get_user_balances(self, response: dict):
         '''
-        "accounts": [
-            {
-                "balance": 99999999.905000000000000000,
-                "available": 99999996.905000000000000000,
-                "order": 3.000000000000000000,
-                "stake": 0,
-                "currency": "CRO"
-            }
-        ]
+        "result": {
+            "accounts": [
+                {
+                    "balance": 99999999.905000000000000000,
+                    "available": 99999996.905000000000000000,
+                    "order": 3.000000000000000000,
+                    "stake": 0,
+                    "currency": "CRO"
+                }
+            ]
+        }
         '''
         try:
             self.logger.info("Received response for private/get-account-summary method with id: {}".format(response["id"]))
@@ -126,6 +129,88 @@ class CryptoComUserApiWorker(object):
                     self.shared_user_api_data["balance_CRO"] = str(balance["available"])
         except Exception as e:
             raise Exception("Wrong data structure in private/get-account-summary response: {}. Exception: {}".format(response, repr(e)))
+
+    def create_market_buy_order(self, instrument_name, amount_to_spend):
+        '''
+        Creates a new BUY order on the Exchange.
+        This call is asynchronous, so the response is simply a confirmation of the request with assigned order_id for the given client_oid.
+        The user.order subscription can be used to check when the order is successfully created.
+        '''
+        client_order_id = self.crypto_com_client.crypto_com_user + "_BUY_" + instrument_name + "_market_order_" + str(self.crypto_com_api_client.current_id())
+        self.client_orders[client_order_id] = {
+            "order_id": "",
+            "status": "pending"
+        }
+        self.crypto_com_api_client.send(
+            self.crypto_com_api_client.build_message(
+                method="private/create-order",
+                params={
+                    "instrument_name": instrument_name,
+                    "side": "BUY",
+                    "type": "MARKET",
+                    "notional": amount_to_spend,
+                    "client_oid": client_order_id
+                }
+            )
+        )
+        return client_order_id
+
+    def buy_CRO_for_USDT_market_order(self, amount_to_spend):
+        return self.create_market_buy_order("CRO_USDT", amount_to_spend)
+
+    def buy_CRO_for_BTC_market_order(self, amount_to_spend):
+        return self.create_market_buy_order("CRO_BTC", amount_to_spend)
+
+    def buy_BTC_for_USDT_market_order(self, amount_to_spend):
+        return self.create_market_buy_order("BTC_USDT", amount_to_spend)
+
+    def create_market_sell_order(self, instrument_name, quantity_to_be_sold):
+        '''
+        Creates a new SELL order on the Exchange.
+        This call is asynchronous, so the response is simply a confirmation of the request with assigned order_id for the given client_oid.
+        The user.order subscription can be used to check when the order is successfully created.
+        '''
+        client_order_id = self.crypto_com_client.crypto_com_user + "_SELL_" + instrument_name + "_market_order_" + str(self.crypto_com_api_client.current_id())
+        self.client_orders[client_order_id] = {
+            "order_id": "",
+            "status": "pending"
+        }
+        self.crypto_com_api_client.send(
+            self.crypto_com_api_client.build_message(
+                method="private/create-order",
+                params={
+                    "instrument_name": instrument_name,
+                    "side": "SELL",
+                    "type": "MARKET",
+                    "quantity": quantity_to_be_sold,
+                    "client_oid": client_order_id
+                }
+            )
+        )
+        return client_order_id
+
+    def sell_CRO_to_USDT_market_order(self, quantity_to_be_sold):
+        return self.create_market_sell_order("CRO_USDT", quantity_to_be_sold)
+
+    def sell_CRO_to_BTC_market_order(self, quantity_to_be_sold):
+        return self.create_market_sell_order("CRO_BTC", quantity_to_be_sold)
+
+    def sell_BTC_to_USDT_market_order(self, quantity_to_be_sold):
+        return self.create_market_sell_order("BTC_USDT", quantity_to_be_sold)
+
+    def handle_response_create_order(self, response: dict):
+        '''
+        "result": {
+            "order_id": "337843775021233500",
+            "client_oid": "my_order_0002"
+        }
+        '''
+        try:
+            self.logger.info("Received response for private/create-order method with id: {}. Result: {}".format(response["id"], response["result"]))
+            client_order_id = response["result"]["client_oid"]
+            self.client_orders[client_order_id]["order_id"] = response["result"]["order_id"]
+        except Exception as e:
+            raise Exception("Wrong data structure in private/create-order response: {}. Exception: {}".format(response, repr(e)))
 
     def handle_channel_event_user_balance(self, event: dict):
         '''
@@ -343,7 +428,8 @@ class CryptoComUserApiWorker(object):
             },
             responses_handling_map={
                 "public/get-instruments": self.handle_response_get_instruments,
-                "private/get-account-summary": self.handle_response_get_user_balances
+                "private/get-account-summary": self.handle_response_get_user_balances,
+                "private/create-order": self.handle_response_create_order
             },
             initial_requests_handling_map={
                 "private/get-account-summary": self.get_user_balances,
