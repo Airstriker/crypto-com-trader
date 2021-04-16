@@ -212,6 +212,36 @@ class CryptoComUserApiWorker(object):
         except Exception as e:
             raise Exception("Wrong data structure in private/create-order response: {}. Exception: {}".format(response, repr(e)))
 
+    def handle_channel_event_user_order(self, event: dict):  #TODO
+        '''
+        "data": [
+            {
+                "status": "ACTIVE",
+                "side": "BUY",
+                "price": 1,
+                "quantity": 1,
+                "order_id": "366455245775097673",
+                "client_oid": "my_order_0002",
+                "create_time": 1588758017375,
+                "update_time": 1588758017411,
+                "type": "LIMIT",
+                "instrument_name": "ETH_CRO",
+                "cumulative_quantity": 0,
+                "cumulative_value": 0,
+                "avg_price": 0,
+                "fee_currency": "CRO",
+                "time_in_force":"GOOD_TILL_CANCEL"
+            }
+        ]
+        '''
+        try:
+            self.logger.info("Received user orders update. Event: {}".format(event["data"]))
+            for order in event["data"]:
+                if order["client_oid"] in self.client_orders:
+                    pass  #TODO
+        except Exception as e:
+            raise Exception("Wrong data structure in user.order channel event. Exception: {}".format(repr(e)))
+
     def handle_channel_event_user_balance(self, event: dict):
         '''
         "data": [
@@ -421,10 +451,12 @@ class CryptoComUserApiWorker(object):
             api_key=self.crypto_com_client.crypto_com_api_key,
             api_secret=self.crypto_com_client.crypto_com_secret_key,
             channels=[
-                "user.balance"
+                "user.balance",
+                "user.order"
             ],
             channels_handling_map={
-                "user.balance": self.handle_channel_event_user_balance
+                "user.balance": self.handle_channel_event_user_balance,
+                "user.order": self.handle_channel_event_user_order
             },
             responses_handling_map={
                 "public/get-instruments": self.handle_response_get_instruments,
